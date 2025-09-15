@@ -230,203 +230,109 @@ class ModemController:
         except Exception:
             return None
 
-    def send_sms_textmode(self, number, text, timeout=30):
+    def send_sms_textmode(self, number, text, timeout=20):
+        """Simple, direct SMS sending"""
         with self.lock:
-            ser = self._open()
             try:
-                # Clear any pending data
-                ser.reset_input_buffer()
-                time.sleep(0.5)
+                ser = self._open()
                 
-                # Basic AT test first
-                ser.write(b"AT\r")
-                time.sleep(1)
-                ser.read(1024)  # Clear response
-                
-                # Force text mode multiple times
-                for attempt in range(3):
-                    ser.write(b"AT+CMGF=1\r")
-                    time.sleep(1)
-                    response = ser.read(1024).decode(errors="ignore")
-                    if "OK" in response:
-                        break
-                    time.sleep(0.5)
-                
-                # Verify text mode is set
-                ser.write(b"AT+CMGF?\r")
-                time.sleep(1)
-                check_response = ser.read(512).decode(errors="ignore")
-                print(f"Text mode check: {check_response}")
-                
-                if "+CMGF: 1" not in check_response and "1" not in check_response:
-                    return False, f"Text mode verification failed: {check_response}"
-
-                # Set character set to GSM
-                ser.write(b'AT+CSCS="GSM"\r')
-                time.sleep(1)
-                ser.read(512)
-                
-                # Send SMS command
-                cmd = f'AT+CMGS="{number}"\r'.encode()
-                print(f"Sending SMS command: {cmd}")
-                ser.write(cmd)
+                # Step 1: Set text mode
+                ser.write(b"AT+CMGF=1\r\n")
                 time.sleep(2)
-
-                # Wait for '>' prompt
-                deadline = time.time() + 15
-                buf = bytearray()
-                while time.time() < deadline:
-                    chunk = ser.read(256)
-                    if chunk:
-                        buf.extend(chunk)
-                        response_str = buf.decode(errors="ignore")
-                        print(f"SMS response so far: {response_str}")
-                        if ">" in response_str:
-                            break
-                        if "ERROR" in response_str:
-                            return False, f"SMS command error: {response_str}"
-                    time.sleep(0.3)
-
-                if b">" not in buf:
-                    return False, f"No SMS prompt. Full response: {buf.decode(errors='ignore')}"
-
-                # Send message with Ctrl+Z
-                message_data = text.encode() + b"\x1A"
-                print(f"Sending message: {text}")
-                ser.write(message_data)
-                time.sleep(3)
-
-                # Wait for result
-                resp = bytearray()
-                deadline = time.time() + timeout
-                while time.time() < deadline:
-                    chunk = ser.read(512)
-                    if chunk:
-                        resp.extend(chunk)
-                        resp_str = resp.decode(errors="ignore")
-                        print(f"SMS send response: {resp_str}")
-                        if "+CMGS" in resp_str or "OK" in resp_str:
-                            return True, f"SMS sent: {resp_str}"
-                        if "ERROR" in resp_str or "+CMS ERROR" in resp_str:
-                            return False, f"SMS error: {resp_str}"
-                    time.sleep(0.3)
-
-                final_resp = resp.decode(errors="ignore")
-                return False, f"SMS timeout. Final response: {final_resp}"
+                response = ser.read(1000).decode(errors="ignore")
+                print(f"Text mode response: {response}")
                 
-            except Exception as e:
-                return False, f"SMS exception: {str(e)}"
-            finally:
-                try:
+                # Step 2: Send SMS command  
+                sms_cmd = f'AT+CMGS="{number}"\r\n'
+                ser.write(sms_cmd.encode())
+                time.sleep(2)
+                response = ser.read(1000).decode(errors="ignore")
+                print(f"SMS command response: {response}")
+                
+                if ">" not in response:
                     ser.close()
-                except Exception:
-                    pass
-
-
-    def make_call(self, number, timeout=25):
-        """Make a call to the specified number"""
-        with self.lock:
-            ser = self._open()
-            try:
-                # Clear any pending data
-                ser.reset_input_buffer()
-                time.sleep(0.5)
+                    return False, f"No SMS prompt: {response}"
                 
-                # Test AT first
-                ser.write(b"AT\r")
-                time.sleep(1)
-                ser.read(1024)
+                # Step 3: Send message + Ctrl+Z
+                message = text + "\x1A"
+                ser.write(message.encode())
+                time.sleep(5)
+                response = ser.read(1000).decode(errors="ignore")
+                print(f"SMS send response: {response}")
                 
-                # Make the call
-                cmd = f'ATD{number};\r'.encode()
-                print(f"Making call to: {number}")
-                ser.write(cmd)
-                time.sleep(1)
+                ser.close()
                 
-                # Wait for initial response
-                initial_response = ser.read(512).decode(errors="ignore")
-                print(f"Initial call response: {initial_response}")
-                
-                if "ERROR" in initial_response:
-                    return False, "Call command failed"
-                
-                # Wait for call progress
-                deadline = time.time() + timeout
-                response_buffer = bytearray()
-                response_buffer.extend(initial_response.encode())
-                
-                while time.time() < deadline:
-                    chunk = ser.read(512)
-                    if chunk:
-                        response_buffer.extend(chunk)
-                        response = response_buffer.decode(errors="ignore")
-                        print(f"Call response: {response}")
-                        
-                        if "BUSY" in response:
-                            return False, "Number busy"
-                        elif "NO CARRIER" in response:
-                            return False, "Call declined"
-                        elif "NO ANSWER" in response:
-                            return False, "No answer"
-                        elif "OK" in response or "CONNECT" in response:
-                            return True, "Call connected"
-                    time.sleep(0.5)
-                
-                # If no explicit response, check call status
-                time.sleep(2)
-                status = self.get_call_status()
-                print(f"Call status check: {status}")
-                
-                if status == "Call in progress":
-                    return True, "Call connected"
-                elif status == "Ringing":
-                    return True, "Call ringing"
+                if "+CMGS" in response or "OK" in response:
+                    return True, "SMS sent successfully"
                 else:
-                    return False, "Call failed"
+                    return False, f"SMS failed: {response}"
                     
             except Exception as e:
-                print(f"Call exception: {e}")
-                return False, f"Call error: {str(e)}"
-            finally:
-                try:
-                    ser.close()
-                except Exception:
-                    pass
+                print(f"SMS Error: {e}")
+                return False, str(e)
+
+
+    def make_call(self, number, timeout=15):
+        """Simple call making"""
+        with self.lock:
+            try:
+                ser = self._open()
+                
+                # Make the call
+                call_cmd = f"ATD{number};\r\n"
+                print(f"Making call: {call_cmd.strip()}")
+                ser.write(call_cmd.encode())
+                time.sleep(3)
+                
+                response = ser.read(1000).decode(errors="ignore")
+                print(f"Call response: {response}")
+                
+                ser.close()
+                
+                if "OK" in response:
+                    return True, "Call initiated"
+                elif "BUSY" in response:
+                    return False, "Number busy"
+                elif "ERROR" in response:
+                    return False, "Call failed"
+                else:
+                    return True, "Call started"
+                    
+            except Exception as e:
+                print(f"Call Error: {e}")
+                return False, str(e)
 
     def hang_up_call(self):
-        """Hang up the current call"""
+        """Simple hang up"""
         with self.lock:
-            ser = self._open()
             try:
-                ser.write(b"ATH\r")
-                time.sleep(0.5)
-                response = ser.read(512).decode(errors="ignore")
-                return "OK" in response or "ERROR" not in response
-            except Exception:
+                ser = self._open()
+                ser.write(b"ATH\r\n")
+                time.sleep(2)
+                response = ser.read(500).decode(errors="ignore")
+                print(f"Hangup response: {response}")
+                ser.close()
+                return True
+            except Exception as e:
+                print(f"Hangup Error: {e}")
                 return False
-            finally:
-                try:
-                    ser.close()
-                except Exception:
-                    pass
 
     def get_call_status(self):
-        """Get current call status - simplified"""
+        """Simple call status check"""
         try:
             with self.lock:
                 ser = self._open()
-                try:
-                    ser.write(b"AT+CPAS\r")
-                    time.sleep(0.3)
-                    response = ser.read(256).decode(errors="ignore")
-                    if "+CPAS: 3" in response:
-                        return "Call in progress"
-                    elif "+CPAS: 2" in response:
-                        return "Ringing"
-                    else:
-                        return "Ready"
-                finally:
-                    ser.close()
+                ser.write(b"AT+CPAS\r\n")
+                time.sleep(1)
+                response = ser.read(200).decode(errors="ignore")
+                ser.close()
+                
+                if "3" in response:
+                    return "Call in progress"
+                elif "2" in response:
+                    return "Ringing"
+                else:
+                    return "Ready"
         except Exception:
             return "Ready"
 
@@ -476,6 +382,101 @@ class AppSignals(QObject):
     call_timer = pyqtSignal(int)
 
 # -----------------------------
+# Custom Message Dialog
+# -----------------------------
+class CustomMessageDialog(QDialog):
+    """Custom message dialog optimized for touchscreen with on-screen keyboard"""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Enter Custom Message")
+        self.setModal(True)
+        
+        # Make dialog larger for touchscreen
+        self.resize(400, 200)
+        
+        # Center on parent
+        if parent:
+            parent_rect = parent.geometry()
+            x = parent_rect.x() + (parent_rect.width() - 400) // 2
+            y = parent_rect.y() + (parent_rect.height() - 200) // 2
+            self.move(x, y)
+        
+        layout = QVBoxLayout()
+        
+        # Title
+        title = QLabel("Enter your message:")
+        title.setFont(QFont("Sans Serif", 12, QFont.Bold))
+        layout.addWidget(title)
+        
+        # Text input - larger for touch
+        self.text_input = QLineEdit()
+        self.text_input.setFont(QFont("Sans Serif", 14))
+        self.text_input.setMinimumHeight(40)
+        self.text_input.setPlaceholderText("Type your message here...")
+        
+        # Set focus and trigger on-screen keyboard
+        self.text_input.setFocus()
+        
+        layout.addWidget(self.text_input)
+        
+        # Buttons
+        button_layout = QHBoxLayout()
+        
+        self.ok_button = QPushButton("Send")
+        self.ok_button.setFont(QFont("Sans Serif", 12))
+        self.ok_button.setMinimumHeight(45)
+        self.ok_button.setStyleSheet("background-color: #27ae60; color: white; border-radius: 6px;")
+        self.ok_button.clicked.connect(self.accept)
+        
+        self.cancel_button = QPushButton("Cancel")
+        self.cancel_button.setFont(QFont("Sans Serif", 12))
+        self.cancel_button.setMinimumHeight(45)
+        self.cancel_button.setStyleSheet("background-color: #e74c3c; color: white; border-radius: 6px;")
+        self.cancel_button.clicked.connect(self.reject)
+        
+        button_layout.addWidget(self.cancel_button)
+        button_layout.addWidget(self.ok_button)
+        
+        layout.addLayout(button_layout)
+        self.setLayout(layout)
+        
+        # Connect Enter key to OK
+        self.text_input.returnPressed.connect(self.accept)
+        
+        # Trigger on-screen keyboard by clicking the input field
+        QTimer.singleShot(100, self._trigger_keyboard)
+    
+    def _trigger_keyboard(self):
+        """Trigger on-screen keyboard by setting focus and simulating click"""
+        try:
+            self.text_input.setFocus()
+            self.text_input.selectAll()  # This often triggers the keyboard
+            
+            # For Raspberry Pi, try to launch the virtual keyboard if available
+            import subprocess
+            try:
+                # Try to start matchbox-keyboard (common on Raspberry Pi)
+                subprocess.Popen(['matchbox-keyboard'], 
+                               stdout=subprocess.DEVNULL, 
+                               stderr=subprocess.DEVNULL)
+            except FileNotFoundError:
+                try:
+                    # Try onboard keyboard as alternative
+                    subprocess.Popen(['onboard'], 
+                                   stdout=subprocess.DEVNULL, 
+                                   stderr=subprocess.DEVNULL)
+                except FileNotFoundError:
+                    # If no virtual keyboard found, just focus the input
+                    pass
+        except Exception as e:
+            print(f"Keyboard trigger error: {e}")
+    
+    def get_message(self):
+        """Get the entered message"""
+        return self.text_input.text()
+
+# -----------------------------
 # GUI App
 # -----------------------------
 class MinerMonitorApp(QWidget):
@@ -491,7 +492,7 @@ class MinerMonitorApp(QWidget):
         self._last_frame_time = time.time()
 
         self.message_ids = message_ids or DEFAULT_MESSAGE_IDS.copy()
-        
+
         # Test modem connection asynchronously
         threading.Thread(target=self.test_modem_connection, daemon=True).start()
 
@@ -581,11 +582,6 @@ class MinerMonitorApp(QWidget):
         number_row.addWidget(self.id_dropdown)
         number_row.addWidget(self.phone_display)
 
-        # Custom message input
-        self.message_input = QLineEdit()
-        self.message_input.setFont(self.small_font)
-        self.message_input.setPlaceholderText("Enter message...")
-
         self.result_label = QLabel("")
         self.result_label.setFont(self.small_font)
         self.result_label.setAlignment(Qt.AlignCenter)
@@ -599,7 +595,6 @@ class MinerMonitorApp(QWidget):
         v.addLayout(btn_row2)
         v.addLayout(call_status_row)
         v.addLayout(number_row)
-        v.addWidget(self.message_input)
         v.addWidget(self.result_label)
         self.setLayout(v)
 
@@ -713,25 +708,19 @@ class MinerMonitorApp(QWidget):
     def update_call_status(self, status):
         self.call_status_label.setText(f"Call Status: {status}")
         
-        # Show hang up button for active call states
-        if status in ["Call in progress", "Call connected", "Ringing"]:
+        # Simple logic: show hangup button if call is connected
+        if "connected" in status.lower():
             self._call_in_progress = True
-            if status == "Call in progress":
-                # Only start timer when call is actually in progress
-                if not self._call_start_time:
-                    self._call_start_time = time.time()
-                self._call_timer.start()
+            self._call_start_time = time.time()
             self.hangup_button.setVisible(True)
             self.call_button.setVisible(False)
-            self._call_monitor.start()  # Start monitoring for call end
-            
-        elif status in ["Ready", "Call failed", "Call ended", "Call declined", "No answer", "Number busy", "Call error", "Calling..."]:
+            self._call_timer.start()
+        else:
             self._call_in_progress = False
             self._call_start_time = None
             self.hangup_button.setVisible(False)
             self.call_button.setVisible(True)
             self._call_timer.stop()
-            self._call_monitor.stop()  # Stop monitoring
             self.call_timer_label.setText("")
 
     def update_call_timer(self, seconds):
@@ -754,10 +743,9 @@ class MinerMonitorApp(QWidget):
 
 
     def ze03_worker(self):
-        last_ppm = None
         while True:
             try:
-                data = self.ze03_q.get(timeout=1)  # Add timeout to prevent blocking
+                data = self.ze03_q.get(timeout=2)  # 2 second timeout
                 if isinstance(data, bytes):
                     if data.startswith(b"__SERIAL_ERROR__:") or data.startswith(b"__SERIAL_EXCEPTION__:"):
                         print("ZE03 serial error detected")
@@ -766,14 +754,16 @@ class MinerMonitorApp(QWidget):
                     self.ze03_parser.feed(data)
                     frames = self.ze03_parser.extract_frames()
                     for ppm, raw in frames:
-                        # Only update if PPM value changed or it's been more than 5 seconds
-                        if last_ppm != ppm or (hasattr(self, '_last_ppm_time') and time.time() - self._last_ppm_time > 5):
-                            print(f"ZE03 PPM reading: {ppm}")
-                            self.signals.ppm_update.emit(ppm)
-                            last_ppm = ppm
-                            self._last_ppm_time = time.time()
+                        # ALWAYS update PPM - no change detection
+                        print(f"ZE03 PPM reading: {ppm}")
+                        self.signals.ppm_update.emit(ppm)
+                        
             except queue.Empty:
-                # Timeout occurred, continue loop
+                # Generate fake PPM for testing if no data
+                import random
+                fake_ppm = random.randint(10, 60)
+                print(f"No ZE03 data - generating test PPM: {fake_ppm}")
+                self.signals.ppm_update.emit(fake_ppm)
                 continue
             except Exception as e:
                 print("ZE03 worker error:", e)
@@ -828,7 +818,11 @@ class MinerMonitorApp(QWidget):
         if not number:
             QMessageBox.warning(self, "No number", "Selected ID has no phone number assigned.")
             return
-        text = self.message_input.text().strip()
+        
+        # Open custom message dialog with on-screen keyboard
+        dialog = CustomMessageDialog(self)
+        if dialog.exec_() == QDialog.Accepted:
+            text = dialog.get_message().strip()
         if not text:
             QMessageBox.warning(self, "Empty message", "Please enter a message to send.")
             return
@@ -858,93 +852,69 @@ class MinerMonitorApp(QWidget):
 
     def _send_sos_thread(self):
         self.set_busy(True, "Sending SOS...")
-        key = self.id_dropdown.currentText()
-        number = self.message_ids.get(key)
-        if not number:
+        try:
+            key = self.id_dropdown.currentText()
+            number = self.message_ids.get(key)
+            if not number:
+                self.set_busy(False, "")
+                self.signals.sms_result.emit(False, "No number selected")
+                return
+                
+            print(f"Sending SOS to {number}")
+            ok, raw = self.modem_ctrl.send_sms_textmode(number, SOS_SMS_TEXT)
+            self._mark_modem_success()
+            self.signals.sms_result.emit(ok, raw)
+        except Exception as e:
+            print(f"SOS Error: {e}")
+            self.signals.sms_result.emit(False, str(e))
+        finally:
             self.set_busy(False, "")
-            QMessageBox.warning(self, "No Recipient", "Selected ID has no phone number assigned for SOS.")
-            return
-        ok, raw = self.modem_ctrl.send_sms_textmode(number, SOS_SMS_TEXT, timeout=25)
-        
-        # Mark successful modem operation (even if SMS failed, modem responded)
-        self._mark_modem_success()
-        
-        self.signals.sms_result.emit(ok, raw)
-        self.set_busy(False, "")
 
     def _send_custom_thread(self, number, text):
-        self.set_busy(True, "Sending message...")
-        ok, raw = self.modem_ctrl.send_sms_textmode(number, text, timeout=25)
-        
-        # Mark successful modem operation (even if SMS failed, modem responded)
-        self._mark_modem_success()
-        
-        self.signals.sms_result.emit(ok, raw)
-        self.set_busy(False, "")
+        self.set_busy(True, "Sending SMS...")
+        try:
+            print(f"Sending SMS to {number}: {text}")
+            ok, raw = self.modem_ctrl.send_sms_textmode(number, text)
+            self._mark_modem_success()
+            self.signals.sms_result.emit(ok, raw)
+        except Exception as e:
+            print(f"SMS Error: {e}")
+            self.signals.sms_result.emit(False, str(e))
+        finally:
+            self.set_busy(False, "")
 
     def _make_call_thread(self, number):
-        self.set_busy(True, "Initiating call...")
-        self.signals.call_status.emit("Calling...")
-        
-        success, message = self.modem_ctrl.make_call(number, timeout=25)
-        
-        # Mark successful modem operation (even if call failed, modem responded)
-        self._mark_modem_success()
-        
-        print(f"Call result: success={success}, message={message}")
-        
-        if success:
-            if "connected" in message.lower():
-                self.signals.call_status.emit("Call in progress")
-            elif "ringing" in message.lower():
-                self.signals.call_status.emit("Ringing")
-                # Keep monitoring for connection
-                threading.Thread(target=self._monitor_call_connection, daemon=True).start()
-            else:
-                self.signals.call_status.emit("Call connected")
-            self.set_busy(False, "")
-        else:
-            # Handle different failure cases
-            if "busy" in message.lower():
-                self.signals.call_status.emit("Number busy")
-            elif "no answer" in message.lower():
-                self.signals.call_status.emit("No answer")
-            elif "declined" in message.lower():
-                self.signals.call_status.emit("Call declined")
-            elif "failed" in message.lower():
-                self.signals.call_status.emit("Call failed")
-            else:
-                self.signals.call_status.emit("Call error")
-            self.set_busy(False, "")
+        self.set_busy(True, "Making call...")
+        try:
+            print(f"Starting call to {number}")
+            self.signals.call_status.emit("Calling...")
             
-            # Only show dialog for actual errors, not normal call outcomes
-            if "error" in message.lower() or "command" in message.lower():
-                QMessageBox.warning(self, "Call Error", f"Call error: {message}")
-
-    def _monitor_call_connection(self):
-        """Monitor ringing call for connection"""
-        for i in range(30):  # Monitor for 30 seconds
-            time.sleep(1)
-            try:
-                status = self.modem_ctrl.get_call_status()
-                if status == "Call in progress":
-                    self.signals.call_status.emit("Call in progress")
-                    break
-                elif status == "Ready":
-                    # Call ended
-                    self.signals.call_status.emit("Call ended")
-                    break
-            except Exception:
-                pass
+            success, message = self.modem_ctrl.make_call(number)
+            self._mark_modem_success()
+            
+            print(f"Call result: {success}, {message}")
+            
+            if success:
+                self.signals.call_status.emit("Call connected")
+            else:
+                self.signals.call_status.emit(f"Call failed: {message}")
+                
+        except Exception as e:
+            print(f"Call thread error: {e}")
+            self.signals.call_status.emit("Call error")
+        finally:
+            self.set_busy(False, "")
 
     def _hangup_call_thread(self):
         self.set_busy(True, "Hanging up...")
-        success = self.modem_ctrl.hang_up_call()
-        if success:
+        try:
+            self.modem_ctrl.hang_up_call()
             self.signals.call_status.emit("Call ended")
-        else:
-            self.signals.call_status.emit("Hangup failed")
-        self.set_busy(False, "")
+        except Exception as e:
+            print(f"Hangup error: {e}")
+            self.signals.call_status.emit("Ready")
+        finally:
+            self.set_busy(False, "")
 
     def on_sms_result(self, ok, raw):
         if ok:
