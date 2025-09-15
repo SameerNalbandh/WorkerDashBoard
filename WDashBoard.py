@@ -273,33 +273,51 @@ class ModemController:
 
 
     def make_call(self, number, timeout=15):
-        """Simple call making"""
+        """Simple call making with better response handling"""
         with self.lock:
             try:
                 ser = self._open()
+                print(f"Call: Opening serial port successful")
+                
+                # Clear any pending data
+                ser.reset_input_buffer()
+                time.sleep(0.5)
+                
+                # Test AT command first
+                ser.write(b"AT\r\n")
+                time.sleep(1)
+                at_response = ser.read(500).decode(errors="ignore")
+                print(f"Call: AT test response: {at_response}")
                 
                 # Make the call
                 call_cmd = f"ATD{number};\r\n"
-                print(f"Making call: {call_cmd.strip()}")
+                print(f"Call: Sending command: {call_cmd.strip()}")
                 ser.write(call_cmd.encode())
-                time.sleep(3)
+                time.sleep(5)  # Wait longer for response
                 
                 response = ser.read(1000).decode(errors="ignore")
-                print(f"Call response: {response}")
+                print(f"Call: Response: {response}")
                 
                 ser.close()
                 
-                if "OK" in response:
-                    return True, "Call initiated"
+                # Check for various responses
+                if "OK" in response or "CONNECT" in response:
+                    return True, "Call connected"
                 elif "BUSY" in response:
                     return False, "Number busy"
+                elif "NO CARRIER" in response:
+                    return False, "Call declined"
+                elif "NO ANSWER" in response:
+                    return False, "No answer"
                 elif "ERROR" in response:
                     return False, "Call failed"
                 else:
-                    return True, "Call started"
+                    # If no clear response, assume call started
+                    return True, "Call initiated"
                     
             except Exception as e:
                 print(f"Call Error: {e}")
+                traceback.print_exc()
                 return False, str(e)
 
     def hang_up_call(self):
@@ -455,20 +473,36 @@ class CustomMessageDialog(QDialog):
             
             # For Raspberry Pi, try to launch the virtual keyboard if available
             import subprocess
-            try:
-                # Try to start matchbox-keyboard (common on Raspberry Pi)
-                subprocess.Popen(['matchbox-keyboard'], 
-                               stdout=subprocess.DEVNULL, 
-                               stderr=subprocess.DEVNULL)
-            except FileNotFoundError:
+            import os
+            
+            print("Attempting to launch virtual keyboard...")
+            
+            # Try different keyboard options
+            keyboards = [
+                'matchbox-keyboard',
+                'onboard', 
+                'florence',
+                'kvkbd',
+                'xvkbd'
+            ]
+            
+            for kb in keyboards:
                 try:
-                    # Try onboard keyboard as alternative
-                    subprocess.Popen(['onboard'], 
-                                   stdout=subprocess.DEVNULL, 
-                                   stderr=subprocess.DEVNULL)
-                except FileNotFoundError:
-                    # If no virtual keyboard found, just focus the input
-                    pass
+                    print(f"Trying {kb}...")
+                    # Check if keyboard exists
+                    result = subprocess.run(['which', kb], capture_output=True, text=True)
+                    if result.returncode == 0:
+                        print(f"Found {kb}, launching...")
+                        subprocess.Popen([kb], 
+                                       stdout=subprocess.DEVNULL, 
+                                       stderr=subprocess.DEVNULL)
+                        break
+                except Exception as e:
+                    print(f"Failed to launch {kb}: {e}")
+                    continue
+            else:
+                print("No virtual keyboard found - using focus only")
+                
         except Exception as e:
             print(f"Keyboard trigger error: {e}")
     
@@ -707,15 +741,20 @@ class MinerMonitorApp(QWidget):
 
     def update_call_status(self, status):
         self.call_status_label.setText(f"Call Status: {status}")
+        print(f"UI: Call status updated to: {status}")
         
-        # Simple logic: show hangup button if call is connected
-        if "connected" in status.lower():
+        # Show hangup button for active call states
+        active_states = ["connected", "initiated", "calling", "ringing"]
+        if any(state in status.lower() for state in active_states):
+            print("UI: Showing hangup button")
             self._call_in_progress = True
-            self._call_start_time = time.time()
+            if "connected" in status.lower():
+                self._call_start_time = time.time()
+                self._call_timer.start()
             self.hangup_button.setVisible(True)
             self.call_button.setVisible(False)
-            self._call_timer.start()
         else:
+            print("UI: Showing call button")
             self._call_in_progress = False
             self._call_start_time = None
             self.hangup_button.setVisible(False)
@@ -854,18 +893,29 @@ class MinerMonitorApp(QWidget):
         self.set_busy(True, "Sending SOS...")
         try:
             key = self.id_dropdown.currentText()
+            print(f"SOS: Selected key: {key}")
+            print(f"SOS: Available IDs: {list(self.message_ids.keys())}")
+            
             number = self.message_ids.get(key)
+            print(f"SOS: Number for key '{key}': {number}")
+            
             if not number:
+                print("SOS: No number found for selected key")
                 self.set_busy(False, "")
                 self.signals.sms_result.emit(False, "No number selected")
                 return
                 
-            print(f"Sending SOS to {number}")
+            print(f"SOS: Sending SOS SMS to {number}")
+            print(f"SOS: Message text: {SOS_SMS_TEXT}")
+            
             ok, raw = self.modem_ctrl.send_sms_textmode(number, SOS_SMS_TEXT)
+            print(f"SOS: SMS result: ok={ok}, raw={raw}")
+            
             self._mark_modem_success()
             self.signals.sms_result.emit(ok, raw)
         except Exception as e:
             print(f"SOS Error: {e}")
+            traceback.print_exc()
             self.signals.sms_result.emit(False, str(e))
         finally:
             self.set_busy(False, "")
@@ -886,21 +936,35 @@ class MinerMonitorApp(QWidget):
     def _make_call_thread(self, number):
         self.set_busy(True, "Making call...")
         try:
-            print(f"Starting call to {number}")
+            print(f"Call Thread: Starting call to {number}")
             self.signals.call_status.emit("Calling...")
             
             success, message = self.modem_ctrl.make_call(number)
+            print(f"Call Thread: Modem response - success: {success}, message: {message}")
+            
             self._mark_modem_success()
             
-            print(f"Call result: {success}, {message}")
-            
             if success:
-                self.signals.call_status.emit("Call connected")
+                if "connected" in message.lower():
+                    self.signals.call_status.emit("Call connected")
+                elif "initiated" in message.lower():
+                    self.signals.call_status.emit("Call initiated")
+                else:
+                    self.signals.call_status.emit("Call connected")
             else:
-                self.signals.call_status.emit(f"Call failed: {message}")
+                # Handle specific failure cases
+                if "busy" in message.lower():
+                    self.signals.call_status.emit("Number busy")
+                elif "declined" in message.lower():
+                    self.signals.call_status.emit("Call declined")
+                elif "no answer" in message.lower():
+                    self.signals.call_status.emit("No answer")
+                else:
+                    self.signals.call_status.emit(f"Call failed: {message}")
                 
         except Exception as e:
             print(f"Call thread error: {e}")
+            traceback.print_exc()
             self.signals.call_status.emit("Call error")
         finally:
             self.set_busy(False, "")
