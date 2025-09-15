@@ -32,7 +32,7 @@ from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QObject
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QLabel, QPushButton, QVBoxLayout, QHBoxLayout,
     QMessageBox, QProgressBar, QLineEdit, QDialog, QFormLayout,
-    QDialogButtonBox, QSizePolicy
+    QDialogButtonBox, QSizePolicy, QComboBox
 )
 from PyQt5.QtGui import QFont
 
@@ -53,8 +53,18 @@ APP_TITLE = "Miner Safety Monitor"
 WINDOW_WIDTH = 480
 WINDOW_HEIGHT = 320
 
-# Single alert destination (edit as needed)
+# Single alert destination (edit as fallback)
 ALERT_PHONE = "+911234567890"
+
+# Contact list for dropdown selection
+CONTACTS = {
+    "sameer": "+919825186687",
+    "ramsha": "+918179489703",
+    "surya": "+917974560541",
+    "anupam": "+917905030839",
+    "shanmukesh": "+919989278339",
+    "kartika": "+919871390413"
+}
 
 # -----------------------------
 # Utilities
@@ -402,7 +412,8 @@ class MinerMonitorApp(QWidget):
         self._last_frame_time = time.time()
         self._above_threshold = False
 
-        # Destination phone for alerts
+        # Contacts and selected destination
+        self.contacts = CONTACTS.copy()
         self.alert_phone = ALERT_PHONE
 
         self.title_font = QFont("Sans Serif", 16, QFont.Bold)
@@ -463,7 +474,18 @@ class MinerMonitorApp(QWidget):
         btn_row.addWidget(self.sos_button)
         btn_row.addWidget(self.send_button)
 
-        # Removed Manage IDs and Location UI
+        # Contact selection row
+        contact_row = QHBoxLayout()
+        self.contact_dropdown = QComboBox()
+        self.contact_dropdown.setFont(self.med_font)
+        self.contact_dropdown.addItems(sorted(self.contacts.keys()))
+        self.contact_label = QLabel(self.contacts.get(self.contact_dropdown.currentText(), self.alert_phone))
+        self.contact_label.setFont(self.small_font)
+        self.contact_label.setAlignment(Qt.AlignLeft)
+        self.contact_dropdown.currentIndexChanged.connect(self._on_contact_changed)
+        contact_row.addWidget(QLabel("Contact:"))
+        contact_row.addWidget(self.contact_dropdown)
+        contact_row.addWidget(self.contact_label)
 
         self.result_label = QLabel("")
         self.result_label.setFont(self.small_font)
@@ -477,6 +499,7 @@ class MinerMonitorApp(QWidget):
         v.addWidget(self.signal_bar)
         v.addWidget(self.busy_bar)
         v.addLayout(btn_row)
+        v.addLayout(contact_row)
         v.addWidget(self.result_label)
         self.setLayout(v)
 
@@ -501,6 +524,10 @@ class MinerMonitorApp(QWidget):
         self._busy = False
 
     # slots
+    def _on_contact_changed(self):
+        name = self.contact_dropdown.currentText()
+        self.alert_phone = self.contacts.get(name, ALERT_PHONE)
+        self.contact_label.setText(self.alert_phone)
     def modem_init_worker(self):
         self.signals.modem_status.emit("Modem: Initializing...")
         ok, msg = self.modem_ctrl.initialize_for_sms()
