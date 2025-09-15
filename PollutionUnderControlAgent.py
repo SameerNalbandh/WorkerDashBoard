@@ -616,9 +616,8 @@ class PollutionControlApp(QWidget):
         self.current_lng = LOCATION_LNG
         self.location_updated = False
 
-        # Contacts and selected destination
-        self.contacts = CONTACTS.copy()
-        self.alert_phone = ALERT_PHONE
+        # Fixed emergency contact
+        self.alert_phone = "+919825186687"
 
         self.title_font = QFont("Sans Serif", 16, QFont.Bold)
         self.big_font = QFont("Sans Serif", 36, QFont.Bold)
@@ -667,16 +666,18 @@ class PollutionControlApp(QWidget):
         self.ppm_label = QLabel("PPM: ---")
         self.ppm_label.setFont(self.big_font)
         self.ppm_label.setAlignment(Qt.AlignCenter)
-        self.ppm_label.setMinimumHeight(80)
+        self.ppm_label.setMinimumHeight(100)
+        self.ppm_label.setMaximumHeight(120)
         self.ppm_label.setStyleSheet("""
             QLabel {
                 background-color: #1a2d3a;
                 border: 3px solid #00d4aa;
                 border-radius: 15px;
-                padding: 15px;
+                padding: 20px;
                 margin: 5px;
-                font-size: 28px;
+                font-size: 32px;
                 font-weight: bold;
+                color: #00ff88;
             }
         """)
 
@@ -837,67 +838,25 @@ class PollutionControlApp(QWidget):
         location_row.addWidget(location_label)
         location_row.addWidget(self.location_display)
         
-        # Contact selection row for SOS (always visible)
-        self.contact_row = QHBoxLayout()
-        self.contact_row.setSpacing(8)
+        # Fixed emergency contact (no dropdown needed)
+        self.alert_phone = "+919825186687"
         
-        contact_label = QLabel("📞 Emergency Contact:")
-        contact_label.setFont(self.med_font)
-        contact_label.setStyleSheet("color: #00d4aa; font-weight: bold; font-size: 12px;")
-        
-        self.contact_dropdown = QComboBox()
-        self.contact_dropdown.setFont(self.med_font)
-        self.contact_dropdown.addItems(sorted(self.contacts.keys()))
-        self.contact_dropdown.setMaximumHeight(35)
-        self.contact_dropdown.setStyleSheet("""
-            QComboBox {
-                background-color: #1a2d3a;
-                color: white;
-                border: 2px solid #00d4aa;
-                border-radius: 6px;
-                padding: 4px;
-                font-weight: bold;
-                font-size: 11px;
-            }
-            QComboBox::drop-down {
-                border: none;
-            }
-            QComboBox::down-arrow {
-                image: none;
-                border-left: 4px solid transparent;
-                border-right: 4px solid transparent;
-                border-top: 4px solid #00d4aa;
-                margin-right: 4px;
-            }
-            QComboBox QAbstractItemView {
-                background-color: #1a2d3a;
-                color: white;
-                border: 2px solid #00d4aa;
-                selection-background-color: #00d4aa;
-            }
-        """)
-        
-        self.contact_label = QLabel(self.contacts.get(self.contact_dropdown.currentText(), self.alert_phone))
-        self.contact_label.setFont(self.small_font)
-        self.contact_label.setAlignment(Qt.AlignLeft)
-        self.contact_label.setMaximumHeight(30)
-        self.contact_label.setStyleSheet("""
+        # Emergency contact display
+        self.contact_display = QLabel("📞 Emergency Contact: +919825186687")
+        self.contact_display.setFont(self.small_font)
+        self.contact_display.setAlignment(Qt.AlignCenter)
+        self.contact_display.setMaximumHeight(30)
+        self.contact_display.setStyleSheet("""
             QLabel {
-                color: #cccccc;
-                background-color: #2a2a2a;
+                color: #00d4aa;
+                background-color: #1a2d3a;
                 border-radius: 5px;
-                padding: 4px;
-                border: 1px solid #555555;
-                font-size: 10px;
+                padding: 5px;
+                border: 1px solid #00d4aa;
+                font-size: 11px;
+                font-weight: bold;
             }
         """)
-        
-        self.contact_dropdown.currentIndexChanged.connect(self._on_contact_changed)
-        self.contact_row.addWidget(contact_label)
-        self.contact_row.addWidget(self.contact_dropdown)
-        self.contact_row.addWidget(self.contact_label)
-        
-        # Contact row is now directly added to main layout
 
         self.result_label = QLabel("")
         self.result_label.setFont(self.small_font)
@@ -942,8 +901,8 @@ class PollutionControlApp(QWidget):
         # Action buttons
         v.addLayout(btn_row)
         
-        # Contact selection
-        v.addLayout(self.contact_row)
+        # Emergency contact display
+        v.addWidget(self.contact_display)
         
         # Result display
         v.addWidget(self.result_label)
@@ -981,10 +940,6 @@ class PollutionControlApp(QWidget):
         self._busy = False
 
     # slots
-    def _on_contact_changed(self):
-        name = self.contact_dropdown.currentText()
-        self.alert_phone = self.contacts.get(name, ALERT_PHONE)
-        self.contact_label.setText(self.alert_phone)
     def modem_init_worker(self):
         self.signals.modem_status.emit("Modem: Initializing...")
         ok, msg = self.modem_ctrl.initialize_for_sms()
@@ -1028,11 +983,12 @@ class PollutionControlApp(QWidget):
                 background-color: {bg_color};
                 border: 3px solid {border_color};
                 border-radius: 15px;
-                padding: 15px;
+                padding: 20px;
                 margin: 5px;
-                font-size: 28px;
+                font-size: 32px;
                 font-weight: bold;
-                min-height: 80px;
+                min-height: 100px;
+                max-height: 120px;
             }}
         """)
         
@@ -1147,7 +1103,7 @@ class PollutionControlApp(QWidget):
             self.loading_dialog.update_message("🚨 Connecting to network...")
             
             # Include location in SOS message
-            sos_message = f"{SOS_SMS_TEXT}\nLocation: {self.current_lat:.6f}, {self.current_lng:.6f}"
+            sos_message = f"{SOS_SMS_TEXT}\nLocation: {self.current_lat:.6f}, {self.current_lng:.6f}\nSent to: {number}"
             ok, raw = self.modem_ctrl.send_sms_textmode(number, sos_message, timeout=20)
             self.signals.sms_result.emit(ok, raw)
         finally:
