@@ -230,34 +230,47 @@ class ModemController:
         except Exception:
             return None
 
-    def send_sms_textmode(self, number, text, timeout=25):
+    def send_sms_textmode(self, number, text, timeout=30):
         with self.lock:
             ser = self._open()
             try:
                 # Clear any pending data
                 ser.reset_input_buffer()
-                
-                # Initialize SMS service first
-                ser.write(b"AT+CSMS=1\r")
-                time.sleep(1)
-                response = ser.read(1024)
-                
-                # Set text mode
-                ser.write(b"AT+CMGF=1\r")
-                time.sleep(1)
-                response = ser.read(1024)
-                
-                # Check if text mode was set
-                ser.write(b"AT+CMGF?\r")
                 time.sleep(0.5)
+                
+                # Basic AT test first
+                ser.write(b"AT\r")
+                time.sleep(1)
+                ser.read(1024)  # Clear response
+                
+                # Force text mode multiple times
+                for attempt in range(3):
+                    ser.write(b"AT+CMGF=1\r")
+                    time.sleep(1)
+                    response = ser.read(1024).decode(errors="ignore")
+                    if "OK" in response:
+                        break
+                    time.sleep(0.5)
+                
+                # Verify text mode is set
+                ser.write(b"AT+CMGF?\r")
+                time.sleep(1)
                 check_response = ser.read(512).decode(errors="ignore")
-                if "+CMGF: 1" not in check_response:
-                    return False, f"Failed to set text mode. Response: {check_response}"
+                print(f"Text mode check: {check_response}")
+                
+                if "+CMGF: 1" not in check_response and "1" not in check_response:
+                    return False, f"Text mode verification failed: {check_response}"
 
+                # Set character set to GSM
+                ser.write(b'AT+CSCS="GSM"\r')
+                time.sleep(1)
+                ser.read(512)
+                
                 # Send SMS command
                 cmd = f'AT+CMGS="{number}"\r'.encode()
+                print(f"Sending SMS command: {cmd}")
                 ser.write(cmd)
-                time.sleep(1)
+                time.sleep(2)
 
                 # Wait for '>' prompt
                 deadline = time.time() + 15
@@ -266,16 +279,22 @@ class ModemController:
                     chunk = ser.read(256)
                     if chunk:
                         buf.extend(chunk)
-                        if b">" in buf:
+                        response_str = buf.decode(errors="ignore")
+                        print(f"SMS response so far: {response_str}")
+                        if ">" in response_str:
                             break
-                    time.sleep(0.2)
+                        if "ERROR" in response_str:
+                            return False, f"SMS command error: {response_str}"
+                    time.sleep(0.3)
 
                 if b">" not in buf:
-                    return False, f"No SMS prompt received. Response: {buf.decode(errors='ignore')}"
+                    return False, f"No SMS prompt. Full response: {buf.decode(errors='ignore')}"
 
                 # Send message with Ctrl+Z
-                ser.write(text.encode() + b"\x1A")
-                time.sleep(2)
+                message_data = text.encode() + b"\x1A"
+                print(f"Sending message: {text}")
+                ser.write(message_data)
+                time.sleep(3)
 
                 # Wait for result
                 resp = bytearray()
@@ -284,16 +303,17 @@ class ModemController:
                     chunk = ser.read(512)
                     if chunk:
                         resp.extend(chunk)
-                        if b"+CMGS" in resp or b"OK" in resp or b"ERROR" in resp or b"+CMS ERROR" in resp:
-                            break
-                    time.sleep(0.2)
+                        resp_str = resp.decode(errors="ignore")
+                        print(f"SMS send response: {resp_str}")
+                        if "+CMGS" in resp_str or "OK" in resp_str:
+                            return True, f"SMS sent: {resp_str}"
+                        if "ERROR" in resp_str or "+CMS ERROR" in resp_str:
+                            return False, f"SMS error: {resp_str}"
+                    time.sleep(0.3)
 
-                s = resp.decode(errors="ignore")
-                if "ERROR" in s or "+CMS ERROR" in s:
-                    return False, f"SMS send error: {s}"
-                if "+CMGS" in s or "OK" in s:
-                    return True, f"SMS sent successfully: {s}"
-                return False, f"No SMS response received: {s}"
+                final_resp = resp.decode(errors="ignore")
+                return False, f"SMS timeout. Final response: {final_resp}"
+                
             except Exception as e:
                 return False, f"SMS exception: {str(e)}"
             finally:
@@ -303,51 +323,69 @@ class ModemController:
                     pass
 
 
-    def make_call(self, number, timeout=20):
+    def make_call(self, number, timeout=25):
         """Make a call to the specified number"""
         with self.lock:
             ser = self._open()
             try:
                 # Clear any pending data
                 ser.reset_input_buffer()
+                time.sleep(0.5)
+                
+                # Test AT first
+                ser.write(b"AT\r")
+                time.sleep(1)
+                ser.read(1024)
                 
                 # Make the call
                 cmd = f'ATD{number};\r'.encode()
+                print(f"Making call to: {number}")
                 ser.write(cmd)
-                time.sleep(2)
+                time.sleep(1)
                 
-                # Wait for call response
+                # Wait for initial response
+                initial_response = ser.read(512).decode(errors="ignore")
+                print(f"Initial call response: {initial_response}")
+                
+                if "ERROR" in initial_response:
+                    return False, "Call command failed"
+                
+                # Wait for call progress
                 deadline = time.time() + timeout
                 response_buffer = bytearray()
+                response_buffer.extend(initial_response.encode())
                 
                 while time.time() < deadline:
                     chunk = ser.read(512)
                     if chunk:
                         response_buffer.extend(chunk)
                         response = response_buffer.decode(errors="ignore")
+                        print(f"Call response: {response}")
                         
-                        if "ERROR" in response:
-                            return False, "Call failed"
-                        elif "BUSY" in response:
+                        if "BUSY" in response:
                             return False, "Number busy"
                         elif "NO CARRIER" in response:
                             return False, "Call declined"
                         elif "NO ANSWER" in response:
                             return False, "No answer"
-                        elif "OK" in response:
-                            # Call initiated successfully, wait a bit more to see if it connects
-                            time.sleep(3)
-                            status = self.get_call_status()
-                            if status == "Call in progress":
-                                return True, "Call connected"
-                            else:
-                                return True, "Call initiated"
-                    time.sleep(0.2)
+                        elif "OK" in response or "CONNECT" in response:
+                            return True, "Call connected"
+                    time.sleep(0.5)
                 
-                # If we get here, assume call was initiated
-                return True, "Call initiated"
+                # If no explicit response, check call status
+                time.sleep(2)
+                status = self.get_call_status()
+                print(f"Call status check: {status}")
+                
+                if status == "Call in progress":
+                    return True, "Call connected"
+                elif status == "Ringing":
+                    return True, "Call ringing"
+                else:
+                    return False, "Call failed"
                     
             except Exception as e:
+                print(f"Call exception: {e}")
                 return False, f"Call error: {str(e)}"
             finally:
                 try:
@@ -648,14 +686,18 @@ class MinerMonitorApp(QWidget):
 
     def update_ppm(self, ppm):
         self._last_ppm = ppm
-        self.last_update_label.setText(f"Last update: {datetime.now().strftime('%H:%M:%S')}")
+        current_time = datetime.now().strftime('%H:%M:%S')
+        self.last_update_label.setText(f"Last update: {current_time}")
         self.ppm_label.setText(f"PPM: {ppm}")
+        print(f"PPM Update: {ppm} at {current_time}")
+        
         if ppm < PPM_WARN:
             color = "#00cc66"
         elif ppm < PPM_DANGER:
             color = "#ffcc33"
         else:
             color = "#ff3333"
+            print(f"DANGER LEVEL PPM: {ppm} - Triggering SOS")
             threading.Thread(target=self._send_sos_thread, daemon=True).start()
         self.ppm_label.setStyleSheet(f"color: {color};")
 
@@ -670,14 +712,20 @@ class MinerMonitorApp(QWidget):
 
     def update_call_status(self, status):
         self.call_status_label.setText(f"Call Status: {status}")
-        if status in ["Call in progress", "Call connected"]:
+        
+        # Show hang up button for active call states
+        if status in ["Call in progress", "Call connected", "Ringing"]:
             self._call_in_progress = True
-            self._call_start_time = time.time()
+            if status == "Call in progress":
+                # Only start timer when call is actually in progress
+                if not self._call_start_time:
+                    self._call_start_time = time.time()
+                self._call_timer.start()
             self.hangup_button.setVisible(True)
             self.call_button.setVisible(False)
-            self._call_timer.start()
             self._call_monitor.start()  # Start monitoring for call end
-        elif status in ["Ready", "Call failed", "Call ended", "Call declined", "No answer", "Number busy"]:
+            
+        elif status in ["Ready", "Call failed", "Call ended", "Call declined", "No answer", "Number busy", "Call error", "Calling..."]:
             self._call_in_progress = False
             self._call_start_time = None
             self.hangup_button.setVisible(False)
@@ -706,17 +754,27 @@ class MinerMonitorApp(QWidget):
 
 
     def ze03_worker(self):
+        last_ppm = None
         while True:
             try:
-                data = self.ze03_q.get()
+                data = self.ze03_q.get(timeout=1)  # Add timeout to prevent blocking
                 if isinstance(data, bytes):
                     if data.startswith(b"__SERIAL_ERROR__:") or data.startswith(b"__SERIAL_EXCEPTION__:"):
-                        self.signals.modem_status.emit("Sensor serial error")
+                        print("ZE03 serial error detected")
                         continue
+                    
                     self.ze03_parser.feed(data)
                     frames = self.ze03_parser.extract_frames()
                     for ppm, raw in frames:
-                        self.signals.ppm_update.emit(ppm)
+                        # Only update if PPM value changed or it's been more than 5 seconds
+                        if last_ppm != ppm or (hasattr(self, '_last_ppm_time') and time.time() - self._last_ppm_time > 5):
+                            print(f"ZE03 PPM reading: {ppm}")
+                            self.signals.ppm_update.emit(ppm)
+                            last_ppm = ppm
+                            self._last_ppm_time = time.time()
+            except queue.Empty:
+                # Timeout occurred, continue loop
+                continue
             except Exception as e:
                 print("ZE03 worker error:", e)
                 traceback.print_exc()
@@ -826,16 +884,22 @@ class MinerMonitorApp(QWidget):
 
     def _make_call_thread(self, number):
         self.set_busy(True, "Initiating call...")
-        self.signals.call_status.emit("Ringing")
+        self.signals.call_status.emit("Calling...")
         
-        success, message = self.modem_ctrl.make_call(number, timeout=20)
+        success, message = self.modem_ctrl.make_call(number, timeout=25)
         
-        # Mark successful modem operation
+        # Mark successful modem operation (even if call failed, modem responded)
         self._mark_modem_success()
+        
+        print(f"Call result: success={success}, message={message}")
         
         if success:
             if "connected" in message.lower():
                 self.signals.call_status.emit("Call in progress")
+            elif "ringing" in message.lower():
+                self.signals.call_status.emit("Ringing")
+                # Keep monitoring for connection
+                threading.Thread(target=self._monitor_call_connection, daemon=True).start()
             else:
                 self.signals.call_status.emit("Call connected")
             self.set_busy(False, "")
@@ -847,12 +911,31 @@ class MinerMonitorApp(QWidget):
                 self.signals.call_status.emit("No answer")
             elif "declined" in message.lower():
                 self.signals.call_status.emit("Call declined")
-            else:
+            elif "failed" in message.lower():
                 self.signals.call_status.emit("Call failed")
+            else:
+                self.signals.call_status.emit("Call error")
             self.set_busy(False, "")
-            # Show error message for failed calls only
-            if "failed" in message.lower() or "error" in message.lower():
-                QMessageBox.warning(self, "Call Failed", f"Call failed: {message}")
+            
+            # Only show dialog for actual errors, not normal call outcomes
+            if "error" in message.lower() or "command" in message.lower():
+                QMessageBox.warning(self, "Call Error", f"Call error: {message}")
+
+    def _monitor_call_connection(self):
+        """Monitor ringing call for connection"""
+        for i in range(30):  # Monitor for 30 seconds
+            time.sleep(1)
+            try:
+                status = self.modem_ctrl.get_call_status()
+                if status == "Call in progress":
+                    self.signals.call_status.emit("Call in progress")
+                    break
+                elif status == "Ready":
+                    # Call ended
+                    self.signals.call_status.emit("Call ended")
+                    break
+            except Exception:
+                pass
 
     def _hangup_call_thread(self):
         self.set_busy(True, "Hanging up...")
