@@ -1081,7 +1081,7 @@ class PollutionControlApp(QWidget):
         )
         
         if reply == QMessageBox.Yes:
-        threading.Thread(target=self._send_sos_thread, daemon=True).start()
+            threading.Thread(target=self._send_sos_thread, daemon=True).start()
 
     def on_location_pressed(self):
         # Get current GPS location
@@ -1097,18 +1097,18 @@ class PollutionControlApp(QWidget):
         self.location_button.setDisabled(True)
         
         try:
-        number = self.alert_phone
-        if not self.modem_ctrl.is_alive():
-            self.signals.sms_result.emit(False, "Modem not responding to AT")
-            return
-            
+            number = self.alert_phone
+            if not self.modem_ctrl.is_alive():
+                self.signals.sms_result.emit(False, "Modem not responding to AT")
+                return
+                
             # Update loading message
             self.loading_dialog.update_message("🚨 Connecting to network...")
             
             # Include location in SOS message
             sos_message = f"{SOS_SMS_TEXT}\nLocation: {self.current_lat:.6f}, {self.current_lng:.6f}"
             ok, raw = self.modem_ctrl.send_sms_textmode(number, sos_message, timeout=20)
-        self.signals.sms_result.emit(ok, raw)
+            self.signals.sms_result.emit(ok, raw)
         finally:
             # Close loading dialog and re-enable buttons
             if self.loading_dialog:
@@ -1128,10 +1128,10 @@ class PollutionControlApp(QWidget):
         self.location_button.setDisabled(True)
         
         try:
-        if not self.modem_ctrl.is_alive():
+            if not self.modem_ctrl.is_alive():
                 self.result_label.setText("❌ Location: Modem not available")
-            return
-            
+                return
+                
             # Update loading message
             self.loading_dialog.update_message("📍 Searching for GPS signal...")
             
