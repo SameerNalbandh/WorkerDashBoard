@@ -206,9 +206,9 @@ class ModemController:
                     time.sleep(0.5)
                     resp = ser.read(256).decode(errors="ignore")
                     for line in resp.splitlines():
-                if "+CSQ" in line:
-                    parts = line.split(":")[1].strip().split(",")
-                    return int(parts[0])
+                        if "+CSQ" in line:
+                            parts = line.split(":")[1].strip().split(",")
+                            return int(parts[0])
                     return None
                 finally:
                     ser.close()
