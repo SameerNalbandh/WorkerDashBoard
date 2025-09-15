@@ -4,10 +4,11 @@ WorkerDashboard.py (Miner Safety Monitor)
 
 Touch-screen friendly dashboard (4.3") for:
 - Winsen ZE03-CO (UART)
-- Quectel EC200U (USB) for SMS
+- Quectel EC200U (USB) for SMS, GNSS
 Features:
 - SOS (predefined SMS)
 - Custom message (dropdown IDs -> assignable phone numbers)
+- Live GNSS location
 - Touch-friendly UI, no emojis, no uploads
 - Robust SMS logic (10s wait). UI loading state & success/fail notifications.
 - GUI updates via Qt signals to avoid painter conflicts.
@@ -30,7 +31,8 @@ from serial import SerialException
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QObject
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QLabel, QPushButton, QVBoxLayout, QHBoxLayout,
-    QMessageBox, QProgressBar, QComboBox, QLineEdit
+    QMessageBox, QProgressBar, QLineEdit, QDialog, QFormLayout,
+    QDialogButtonBox, QSizePolicy
 )
 from PyQt5.QtGui import QFont
 
@@ -41,41 +43,18 @@ ZE03_SERIAL = "/dev/ttyS0"
 ZE03_BAUD = 9600
 
 MODEM_BAUD = 115200
+MODEM_SERIAL = "/dev/ttyAMA5"  # Fixed UART port for Quectel EC200U
 
 SOS_SMS_TEXT = "SOS: Dangerous gas levels detected!"
 PPM_WARN = 40
 PPM_DANGER = 100
 
-MODEM_PORT = "/dev/ttyAMA5"
-
-# Global stylesheet: improved contrast and legibility
-APP_STYLESHEET = """
-QWidget { background-color: #0b0f17; color: #e6edf3; }
-QLabel { color: #e6edf3; }
-QPushButton { background-color: #1f6feb; color: #ffffff; border: none; border-radius: 10px; padding: 10px 12px; }
-QPushButton#sosButton { background-color: #d1242f; }
-QPushButton#sosButton:pressed { background-color: #a40e26; }
-QPushButton:pressed { background-color: #1158c7; }
-QPushButton:disabled { background-color: #30363d; color: #8b949e; }
-QLineEdit, QComboBox { background-color: #0d1117; color: #e6edf3; border: 1px solid #30363d; border-radius: 8px; padding: 6px 8px; }
-QProgressBar { background-color: #0d1117; border: 1px solid #30363d; border-radius: 6px; text-align: center; color: #e6edf3; }
-QProgressBar::chunk { background-color: #238636; border-radius: 6px; }
-QMessageBox { background-color: #0b0f17; }
-"""
-
 APP_TITLE = "Miner Safety Monitor"
 WINDOW_WIDTH = 480
 WINDOW_HEIGHT = 320
 
-# Predefined message IDs
-DEFAULT_MESSAGE_IDS = {
-    "sameer": "+919825186687",
-    "ramsha": "+918179489703",
-    "surya" : "+917974560541",
-    "anupam": "+917905030839",
-    "shanmukesh":"+919989278339",
-    "kartika":"+919871390413"
-}
+# Single alert destination (edit as needed)
+ALERT_PHONE = "+911234567890"
 
 # -----------------------------
 # Utilities
@@ -266,7 +245,65 @@ class ModemController:
                 except Exception:
                     pass
 
-    # GNSS methods removed as live location feature is not used
+    def start_gnss(self):
+        try_cmds = ["AT+QGNSS=1", "AT+QGPS=1", "AT+CGNSPWR=1"]
+        results = {}
+        for cmd in try_cmds:
+            try:
+                raw = self.send_at(cmd, wait_for=b"OK", timeout=1)
+                results[cmd] = raw.decode(errors="ignore")
+            except Exception as e:
+                results[cmd] = f"ERR:{e}"
+        return results
+
+    def get_gnss_location(self, timeout=6):
+        with self.lock:
+            ser = self._open()
+            try:
+                ser.write(b"AT+QGNSSLOC?\r")
+                time.sleep(1)
+                out = ser.read_all().decode(errors="ignore")
+                for line in out.splitlines():
+                    if line.startswith("+QGNSSLOC:"):
+                        parts = line.split(":")[1].strip().split(",")
+                        try:
+                            lat = float(parts[1])
+                            lon = float(parts[2])
+                            return {"lat": lat, "lon": lon, "raw": out}
+                        except Exception:
+                            pass
+
+                ser.write(b"AT+QGPSLOC?\r")
+                time.sleep(1)
+                out = ser.read_all().decode(errors="ignore")
+                for line in out.splitlines():
+                    if line.startswith("+QGPSLOC:"):
+                        parts = line.split(":")[1].strip().split(",")
+                        try:
+                            lat = float(parts[1])
+                            lon = float(parts[2])
+                            return {"lat": lat, "lon": lon, "raw": out}
+                        except Exception:
+                            pass
+
+                ser.write(b"AT+CGNSINF\r")
+                time.sleep(1)
+                out = ser.read_all().decode(errors="ignore")
+                for line in out.splitlines():
+                    if line.startswith("+CGNSINF:"):
+                        fields = line.split(":")[1].strip().split(",")
+                        if fields[1] == "1":
+                            lat = float(fields[3])
+                            lon = float(fields[4])
+                            return {"lat": lat, "lon": lon, "raw": out}
+                return None
+            except Exception:
+                return None
+            finally:
+                try:
+                    ser.close()
+                except Exception:
+                    pass
 
 # -----------------------------
 # Auto-detect modem
@@ -307,22 +344,21 @@ class MinerMonitorApp(QWidget):
         self.signals = AppSignals()
         self.setWindowTitle(APP_TITLE)
         self.resize(WINDOW_WIDTH, WINDOW_HEIGHT)
-        self.setStyleSheet(APP_STYLESHEET)
+        self.setStyleSheet("background-color: #0f1420; color: #e6eef8;")
         self._last_ppm = None
         self._last_frame_time = time.time()
-        self._auto_sos_sent = False
+        self._above_threshold = False
 
-        self.message_ids = message_ids or DEFAULT_MESSAGE_IDS.copy()
+        # Destination phone for alerts
+        self.alert_phone = ALERT_PHONE
 
-        self.title_font = QFont("Sans Serif", 14, QFont.Bold)
-        self.big_font = QFont("Sans Serif", 28, QFont.Bold)
-        self.med_font = QFont("Sans Serif", 12)
-        self.small_font = QFont("Sans Serif", 10)
+        self.title_font = QFont("Sans Serif", 16, QFont.Bold)
+        self.big_font = QFont("Sans Serif", 36, QFont.Bold)
+        self.med_font = QFont("Sans Serif", 13)
+        self.small_font = QFont("Sans Serif", 11)
 
         # Top bar
         top_bar = QHBoxLayout()
-        top_bar.setContentsMargins(0, 0, 0, 0)
-        top_bar.setSpacing(8)
         self.title_label = QLabel("MINER SAFETY")
         self.title_label.setFont(self.title_font)
         self.title_label.setAlignment(Qt.AlignCenter)
@@ -348,63 +384,48 @@ class MinerMonitorApp(QWidget):
         self.signal_bar = QProgressBar()
         self.signal_bar.setRange(0, 31)
         self.signal_bar.setFormat("Signal: %v")
+        self.signal_bar.setStyleSheet("QProgressBar{border:1px solid #334; border-radius:6px; background:#0b1020;} QProgressBar::chunk{background-color:#2ecc71;}")
+
+        # Busy/loading bar (indeterminate)
+        self.busy_bar = QProgressBar()
+        self.busy_bar.setRange(0, 0)
+        self.busy_bar.setVisible(False)
+        self.busy_bar.setFixedHeight(10)
+        self.busy_bar.setStyleSheet("QProgressBar{border:1px solid #334; border-radius:6px; background:#0b1020;} QProgressBar::chunk{background-color:#f1c40f;}")
 
         # Buttons
         btn_row = QHBoxLayout()
-        btn_row.setContentsMargins(0, 0, 0, 0)
-        btn_row.setSpacing(8)
         self.sos_button = QPushButton("SOS")
-        self.sos_button.setObjectName("sosButton")
         self.sos_button.setFont(self.med_font)
         self.sos_button.setMinimumHeight(70)
+        self.sos_button.setStyleSheet("background-color: #d35454; color: white; border-radius: 10px;")
         self.sos_button.clicked.connect(self.on_sos_pressed)
 
-        self.send_button = QPushButton("Send Custom Message")
+        self.send_button = QPushButton("SMS")
         self.send_button.setFont(self.med_font)
         self.send_button.setMinimumHeight(70)
+        self.send_button.setStyleSheet("background-color: #2e86de; color: white; border-radius: 10px;")
         self.send_button.clicked.connect(self.on_send_pressed)
 
         btn_row.addWidget(self.sos_button)
         btn_row.addWidget(self.send_button)
 
-        # Custom message controls
-        custom_row = QHBoxLayout()
-        custom_row.setContentsMargins(0, 0, 0, 0)
-        custom_row.setSpacing(8)
-        self.id_dropdown = QComboBox()
-        self.id_dropdown.setFont(self.med_font)
-        self.id_dropdown.addItems(sorted(self.message_ids.keys()))
-        self.phone_display = QLabel(self.message_ids.get(self.id_dropdown.currentText(), ""))
-        self.phone_display.setFont(self.small_font)
-        self.id_dropdown.currentIndexChanged.connect(self._update_phone_display)
-
-        custom_row.addWidget(self.id_dropdown)
-        custom_row.addWidget(self.phone_display)
-
-        self.message_input = QLineEdit()
-        self.message_input.setFont(self.small_font)
-        self.message_input.setPlaceholderText("Custom message...")
+        # Removed Manage IDs and Location UI
 
         self.result_label = QLabel("")
         self.result_label.setFont(self.small_font)
         self.result_label.setAlignment(Qt.AlignCenter)
 
         v = QVBoxLayout()
-        v.setContentsMargins(12, 10, 12, 12)
-        v.setSpacing(8)
         v.addLayout(top_bar)
         v.addWidget(self.ppm_label)
         v.addWidget(self.last_update_label)
         v.addWidget(self.status_label)
         v.addWidget(self.signal_bar)
+        v.addWidget(self.busy_bar)
         v.addLayout(btn_row)
-        v.addLayout(custom_row)
-        v.addWidget(self.message_input)
         v.addWidget(self.result_label)
         self.setLayout(v)
-
-        # loading overlay for actions
-        self._create_loading_overlay()
 
         # signals
         self.signals.ppm_update.connect(self.update_ppm)
@@ -417,41 +438,83 @@ class MinerMonitorApp(QWidget):
         self.reader_thread.start()
 
         self.timer = QTimer()
-        self.timer.setInterval(4000)
+        self.timer.setInterval(5000)
         self.timer.timeout.connect(self.periodic_tasks)
         self.timer.start()
 
         self._busy = False
 
-        # PPM staleness watchdog
-        self._last_frame_time = 0
-        self.stale_timer = QTimer()
-        self.stale_timer.setInterval(1000)
-        self.stale_timer.timeout.connect(self._check_ppm_staleness)
-        self.stale_timer.start()
-
     # slots
-    def _update_phone_display(self):
-        key = self.id_dropdown.currentText()
-        self.phone_display.setText(self.message_ids.get(key, ""))
+    # Simple on-screen keyboard dialog for SMS text
+    def open_sms_keyboard(self):
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Type SMS")
+        layout = QVBoxLayout(dialog)
+
+        input_line = QLineEdit()
+        input_line.setFont(self.med_font)
+        input_line.setPlaceholderText("Type message...")
+        input_line.setReadOnly(True)
+        layout.addWidget(input_line)
+
+        def append_text(t):
+            input_line.setText(input_line.text() + t)
+
+        def backspace():
+            txt = input_line.text()
+            if txt:
+                input_line.setText(txt[:-1])
+
+        grid_rows = [
+            list("1234567890"),
+            list("qwertyuiop"),
+            list("asdfghjkl"),
+            list("zxcvbnm"),
+        ]
+        for row in grid_rows:
+            h = QHBoxLayout()
+            for ch in row:
+                b = QPushButton(ch.upper())
+                b.setMinimumHeight(36)
+                b.setStyleSheet("background:#1b2235; color:#e6eef8; border-radius:6px;")
+                b.clicked.connect(lambda _, c=ch: append_text(c))
+                h.addWidget(b)
+            layout.addLayout(h)
+
+        controls = QHBoxLayout()
+        for label, fn in [("SPACE", lambda: append_text(" ")), ("BACK", backspace), ("CLEAR", lambda: input_line.setText(""))]:
+            b = QPushButton(label)
+            b.setMinimumHeight(36)
+            b.setStyleSheet("background:#25304d; color:#e6eef8; border-radius:6px;")
+            b.clicked.connect(fn)
+            controls.addWidget(b)
+        layout.addLayout(controls)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        layout.addWidget(buttons)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+
+        if dialog.exec_() == QDialog.Accepted:
+            return input_line.text().strip()
+        return None
 
     def update_ppm(self, ppm):
         self._last_ppm = ppm
-        self._last_frame_time = time.time()
         self.last_update_label.setText(f"Last update: {datetime.now().strftime('%H:%M:%S')}")
         self.ppm_label.setText(f"PPM: {ppm}")
         if ppm < PPM_WARN:
             color = "#00cc66"
-            # re-arm auto SOS when levels return to safe
-            self._auto_sos_sent = False
         elif ppm < PPM_DANGER:
             color = "#ffcc33"
         else:
             color = "#ff3333"
-            if not self._auto_sos_sent:
-                self.result_label.setText("Auto SOS: high CO level")
+            if not self._above_threshold:
+                self._above_threshold = True
+                self.result_label.setText("Auto SOS triggered due to high PPM")
                 threading.Thread(target=self._send_sos_thread, daemon=True).start()
-                self._auto_sos_sent = True
+        if ppm < PPM_DANGER:
+            self._above_threshold = False
         self.ppm_label.setStyleSheet(f"color: {color};")
 
     def update_modem_status(self, text):
@@ -459,7 +522,7 @@ class MinerMonitorApp(QWidget):
 
     def on_gsm_signal(self, val):
         if val is None:
-            self.status_label.setText("Modem: Online | Signal: --")
+            self.status_label.setText("Modem: Online | Signal: ?")
         else:
             self.signal_bar.setValue(val)
             self.status_label.setText(f"Modem: Online | Signal: {val}")
@@ -470,11 +533,7 @@ class MinerMonitorApp(QWidget):
                 data = self.ze03_q.get()
                 if isinstance(data, bytes):
                     if data.startswith(b"__SERIAL_ERROR__:") or data.startswith(b"__SERIAL_EXCEPTION__:"):
-                        # Sensor serial error; do not override modem status label
-                        try:
-                            print(data.decode(errors="ignore"))
-                        except Exception:
-                            pass
+                        self.signals.modem_status.emit("Sensor serial error")
                         continue
                     self.ze03_parser.feed(data)
                     frames = self.ze03_parser.extract_frames()
@@ -492,132 +551,54 @@ class MinerMonitorApp(QWidget):
         try:
             alive = self.modem_ctrl.is_alive()
             if not alive:
-                self.signals.modem_status.emit("Modem: Offline | Signal: --")
+                self.signals.modem_status.emit("Modem: Offline")
                 return
             rssi = self.modem_ctrl.get_signal_quality()
             self.signals.gsm_signal.emit(rssi)
         except Exception as e:
             self.signals.modem_status.emit(f"Modem check error: {e}")
 
-    def _create_loading_overlay(self):
-        self.overlay = QWidget(self)
-        self.overlay.setStyleSheet("background-color: rgba(0, 0, 0, 160);")
-        self.overlay.setVisible(False)
-        self.overlay.setAttribute(Qt.WA_TransparentForMouseEvents, False)
-        layout = QVBoxLayout(self.overlay)
-        layout.setContentsMargins(24, 24, 24, 24)
-        layout.setSpacing(12)
-        layout.addStretch(1)
-        self.overlay_label = QLabel("Please wait...")
-        self.overlay_label.setAlignment(Qt.AlignCenter)
-        self.overlay_label.setFont(self.med_font)
-        layout.addWidget(self.overlay_label)
-        self.overlay_progress = QProgressBar()
-        self.overlay_progress.setRange(0, 0)
-        layout.addWidget(self.overlay_progress)
-        layout.addStretch(1)
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        if hasattr(self, "overlay"):
-            self.overlay.setGeometry(self.rect())
-
-    def show_loading(self, text=""):
-        def _show():
-            self._busy = True
-            self.sos_button.setDisabled(True)
-            self.send_button.setDisabled(True)
-            self.overlay_label.setStyleSheet("color: #e6edf3;")
-            self.overlay_label.setText(text or "Please wait...")
-            self.overlay_progress.setRange(0, 0)
-            self.overlay.setGeometry(self.rect())
-            self.overlay.show()
-        QTimer.singleShot(0, _show)
-
-    def hide_loading(self):
-        def _hide():
-            self._busy = False
-            self.overlay.hide()
-            self.sos_button.setDisabled(False)
-            self.send_button.setDisabled(False)
-        QTimer.singleShot(0, _hide)
-
-    def show_result_overlay(self, text, ok):
-        def _show():
-            color = "#10b981" if ok else "#ef4444"
-            self.overlay_label.setStyleSheet(f"color: {color};")
-            self.overlay_label.setText(text)
-            self.overlay_progress.setRange(0, 1)
-            self.overlay.setGeometry(self.rect())
-            self.overlay.show()
-            QTimer.singleShot(1300, self.hide_loading)
-        QTimer.singleShot(0, _show)
-
     def set_busy(self, busy, text=""):
-        if busy:
-            self.show_loading(text or "Please wait...")
-        else:
-            self.hide_loading()
+        def _set():
+            self._busy = busy
+            self.sos_button.setDisabled(busy)
+            self.send_button.setDisabled(busy)
+            self.busy_bar.setVisible(busy)
+            self.result_label.setText(text)
+        QTimer.singleShot(0, _set)
 
     def on_sos_pressed(self):
-        def confirmed():
-            threading.Thread(target=self._send_sos_thread, daemon=True).start()
-        self._confirm_and_run("Send SOS SMS?", confirmed)
+        threading.Thread(target=self._send_sos_thread, daemon=True).start()
 
     def on_send_pressed(self):
-        key = self.id_dropdown.currentText()
-        number = self.message_ids.get(key)
-        if not number:
-            QMessageBox.warning(self, "No number", "Selected ID has no phone number assigned.")
-            return
-        text = self.message_input.text().strip()
+        number = self.alert_phone
+        text = self.open_sms_keyboard()
         if not text:
-            QMessageBox.warning(self, "Empty message", "Please enter a message to send.")
             return
-        def confirmed():
-            threading.Thread(target=self._send_custom_thread, args=(number, text), daemon=True).start()
-        self._confirm_and_run("Send custom SMS?", confirmed)
-
-    def _confirm_and_run(self, prompt, fn_if_yes):
-        r = QMessageBox.question(self, "Confirm", prompt, QMessageBox.Yes | QMessageBox.No)
-        if r == QMessageBox.Yes:
-            fn_if_yes()
+        threading.Thread(target=self._send_custom_thread, args=(number, text), daemon=True).start()
 
     def _send_sos_thread(self):
         self.set_busy(True, "Sending SOS...")
-        key = self.id_dropdown.currentText()
-        number = self.message_ids.get(key)
-        if not number:
-            self.set_busy(False, "")
-            QMessageBox.warning(self, "No Recipient", "Selected ID has no phone number assigned for SOS.")
-            return
+        number = self.alert_phone
         ok, raw = self.modem_ctrl.send_sms_textmode(number, SOS_SMS_TEXT, timeout=10)
         self.signals.sms_result.emit(ok, raw)
+        self.set_busy(False, "")
 
     def _send_custom_thread(self, number, text):
         self.set_busy(True, "Sending message...")
         ok, raw = self.modem_ctrl.send_sms_textmode(number, text, timeout=10)
         self.signals.sms_result.emit(ok, raw)
+        self.set_busy(False, "")
 
     def on_sms_result(self, ok, raw):
         if ok:
+            QMessageBox.information(self, "SMS Sent", f"Message sent successfully.\n\n{(raw or '')[:200]}")
             self.result_label.setText("Last SMS: Sent")
-            self.show_result_overlay("Message sent successfully", True)
         else:
+            QMessageBox.warning(self, "SMS Failed", f"Failed to send message.\n\n{(raw or '')[:200]}")
             self.result_label.setText("Last SMS: Failed")
-            self.show_result_overlay("Failed to send message", False)
 
-    def _check_ppm_staleness(self):
-        now = time.time()
-        if self._last_frame_time == 0 or (now - self._last_frame_time) > 3.0:
-            self.ppm_label.setText("PPM: --")
-            self.ppm_label.setStyleSheet("color: #8b949e;")
-
-    def _ensure_gnss_started(self):
-        try:
-            self.modem_ctrl.start_gnss()
-        except Exception:
-            pass
+    # Removed manage IDs and location handlers
 
 # -----------------------------
 # Main
@@ -627,7 +608,7 @@ def main():
     ze03_reader = SerialReaderThread(ZE03_SERIAL, ZE03_BAUD, ze03_queue, name="ZE03Reader")
     ze03_reader.start()
 
-    modem_port = MODEM_PORT
+    modem_port = MODEM_SERIAL
     modem = ModemController(modem_port, MODEM_BAUD, timeout=2)
 
     app = QApplication(sys.argv)
@@ -635,7 +616,7 @@ def main():
     font.setPointSize(10)
     app.setFont(font)
 
-    window = MinerMonitorApp(ze03_queue, modem, message_ids=DEFAULT_MESSAGE_IDS.copy())
+    window = MinerMonitorApp(ze03_queue, modem)
     window.showFullScreen()
     try:
         sys.exit(app.exec_())
