@@ -221,9 +221,9 @@ class ModemController:
                     time.sleep(0.5)
                     resp = ser.read(256).decode(errors="ignore")
                     for line in resp.splitlines():
-                if "+CSQ" in line:
-                    parts = line.split(":")[1].strip().split(",")
-                    return int(parts[0])
+                        if "+CSQ" in line:
+                            parts = line.split(":")[1].strip().split(",")
+                            return int(parts[0])
                     return None
                 finally:
                     ser.close()
@@ -339,8 +339,8 @@ class ModemController:
             finally:
                 try:
                     ser.close()
-                        except Exception:
-                            pass
+                except Exception:
+                    pass
 
     def hang_up_call(self):
         """Simple hang up"""
@@ -373,7 +373,7 @@ class ModemController:
                     return "Ringing"
                 else:
                     return "Ready"
-            except Exception:
+        except Exception:
             return "Ready"
 
     def initialize_sms(self):
@@ -400,7 +400,7 @@ class ModemController:
                     return "+CMGF: 1" in response
                 finally:
                     ser.close()
-                except Exception:
+        except Exception:
             return False
 
 # -----------------------------
@@ -875,18 +875,18 @@ class MinerMonitorApp(QWidget):
                     # If we can open the port, modem is probably online
                     self.signals.modem_status.emit("Modem: Online")
                 except Exception:
-                self.signals.modem_status.emit("Modem: Offline")
+                    self.signals.modem_status.emit("Modem: Offline")
         except Exception as e:
             print(f"Modem check error: {e}")
             # If there's an error but calls work, assume modem is online
             self.signals.modem_status.emit("Modem: Online")
 
     def set_busy(self, busy, text=""):
-            self._busy = busy
-            self.sos_button.setDisabled(busy)
-            self.send_button.setDisabled(busy)
+        self._busy = busy
+        self.sos_button.setDisabled(busy)
+        self.send_button.setDisabled(busy)
         self.call_button.setDisabled(busy)
-            self.result_label.setText(text)
+        self.result_label.setText(text)
 
     def on_sos_pressed(self):
         def confirmed():
@@ -985,7 +985,7 @@ class MinerMonitorApp(QWidget):
             print(f"Hangup error: {e}")
             self.signals.call_status.emit("Ready")
         finally:
-        self.set_busy(False, "")
+            self.set_busy(False, "")
 
     def on_sms_result(self, ok, raw):
         if ok:
