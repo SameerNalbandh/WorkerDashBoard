@@ -824,13 +824,13 @@ class PollutionControlApp(QWidget):
         location_row.addWidget(location_label)
         location_row.addWidget(self.location_display)
         
-        # Contact selection row for SOS (hidden by default, shown only when needed)
+        # Contact selection row for SOS (always visible)
         self.contact_row = QHBoxLayout()
         self.contact_row.setSpacing(10)
         
         contact_label = QLabel("📞 Emergency Contact:")
         contact_label.setFont(self.med_font)
-        contact_label.setStyleSheet("color: #ff4444; font-weight: bold;")
+        contact_label.setStyleSheet("color: #00d4aa; font-weight: bold;")
         
         self.contact_dropdown = QComboBox()
         self.contact_dropdown.setFont(self.med_font)
@@ -839,7 +839,7 @@ class PollutionControlApp(QWidget):
             QComboBox {
                 background-color: #1a2d3a;
                 color: white;
-                border: 2px solid #ff4444;
+                border: 2px solid #00d4aa;
                 border-radius: 8px;
                 padding: 5px;
                 font-weight: bold;
@@ -851,14 +851,14 @@ class PollutionControlApp(QWidget):
                 image: none;
                 border-left: 5px solid transparent;
                 border-right: 5px solid transparent;
-                border-top: 5px solid #ff4444;
+                border-top: 5px solid #00d4aa;
                 margin-right: 5px;
             }
             QComboBox QAbstractItemView {
                 background-color: #1a2d3a;
                 color: white;
-                border: 2px solid #ff4444;
-                selection-background-color: #ff4444;
+                border: 2px solid #00d4aa;
+                selection-background-color: #00d4aa;
             }
         """)
         
@@ -880,10 +880,10 @@ class PollutionControlApp(QWidget):
         self.contact_row.addWidget(self.contact_dropdown)
         self.contact_row.addWidget(self.contact_label)
         
-        # Hide contact row by default
+        # Contact row widget (visible by default)
         self.contact_row_widget = QWidget()
         self.contact_row_widget.setLayout(self.contact_row)
-        self.contact_row_widget.setVisible(False)
+        self.contact_row_widget.setVisible(True)
 
         self.result_label = QLabel("")
         self.result_label.setFont(self.small_font)
@@ -976,7 +976,6 @@ class PollutionControlApp(QWidget):
             if not self._above_threshold:
                 self._above_threshold = True
                 self.result_label.setText("🚨 CRITICAL POLLUTION DETECTED! PPM > 200 - AUTO SOS TRIGGERED! 🚨")
-                self.contact_row_widget.setVisible(True)  # Show contact selection
                 threading.Thread(target=self._send_sos_thread, daemon=True).start()
         
         if ppm < PPM_DANGER:
