@@ -60,8 +60,8 @@ PPM_WARN = 100
 PPM_DANGER = 200
 
 APP_TITLE = "Pollution Control Agent"
-WINDOW_WIDTH = 480
-WINDOW_HEIGHT = 320
+WINDOW_WIDTH = 500
+WINDOW_HEIGHT = 400
 
 # Single alert destination (edit as fallback)
 ALERT_PHONE = "+911234567890"
@@ -667,37 +667,44 @@ class PollutionControlApp(QWidget):
         self.ppm_label = QLabel("PPM: ---")
         self.ppm_label.setFont(self.big_font)
         self.ppm_label.setAlignment(Qt.AlignCenter)
+        self.ppm_label.setMinimumHeight(80)
         self.ppm_label.setStyleSheet("""
             QLabel {
                 background-color: #1a2d3a;
                 border: 3px solid #00d4aa;
                 border-radius: 15px;
-                padding: 20px;
-                margin: 10px;
+                padding: 15px;
+                margin: 5px;
+                font-size: 28px;
+                font-weight: bold;
             }
         """)
 
         self.last_update_label = QLabel("Last update: --")
         self.last_update_label.setFont(self.small_font)
         self.last_update_label.setAlignment(Qt.AlignCenter)
+        self.last_update_label.setMaximumHeight(25)
         self.last_update_label.setStyleSheet("""
             QLabel {
                 color: #cccccc;
-                background-color: #333333;
-                border-radius: 5px;
-                padding: 5px;
+                background-color: #2a2a2a;
+                border-radius: 3px;
+                padding: 3px;
+                font-size: 10px;
             }
         """)
 
         self.status_label = QLabel("Modem: -- | Signal: --")
         self.status_label.setFont(self.small_font)
         self.status_label.setAlignment(Qt.AlignCenter)
+        self.status_label.setMaximumHeight(25)
         self.status_label.setStyleSheet("""
             QLabel {
                 color: #cccccc;
-                background-color: #333333;
-                border-radius: 5px;
-                padding: 5px;
+                background-color: #2a2a2a;
+                border-radius: 3px;
+                padding: 3px;
+                font-size: 10px;
             }
         """)
 
@@ -705,31 +712,35 @@ class PollutionControlApp(QWidget):
         self.firebase_status_label = QLabel("📡 Firebase: --")
         self.firebase_status_label.setFont(self.small_font)
         self.firebase_status_label.setAlignment(Qt.AlignCenter)
+        self.firebase_status_label.setMaximumHeight(25)
         self.firebase_status_label.setStyleSheet("""
             QLabel {
                 color: #cccccc;
-                background-color: #333333;
-                border-radius: 5px;
-                padding: 5px;
+                background-color: #2a2a2a;
+                border-radius: 3px;
+                padding: 3px;
+                font-size: 10px;
             }
         """)
 
-        # Signal strength bar with safety colors
+        # Signal strength bar with environmental colors
         self.signal_bar = QProgressBar()
         self.signal_bar.setRange(0, 31)
         self.signal_bar.setFormat("Signal: %v")
+        self.signal_bar.setMaximumHeight(20)
         self.signal_bar.setStyleSheet("""
             QProgressBar {
-                border: 2px solid #ff6b35;
-                border-radius: 8px;
-                background-color: #2a2a2a;
+                border: 1px solid #00d4aa;
+                border-radius: 5px;
+                background-color: #1a2d3a;
                 text-align: center;
                 color: white;
                 font-weight: bold;
+                font-size: 10px;
             }
             QProgressBar::chunk {
-                background-color: #ff6b35;
-                border-radius: 6px;
+                background-color: #00d4aa;
+                border-radius: 4px;
             }
         """)
 
@@ -802,15 +813,16 @@ class PollutionControlApp(QWidget):
 
         # Location display row with environmental styling
         location_row = QHBoxLayout()
-        location_row.setSpacing(10)
+        location_row.setSpacing(8)
         
         location_label = QLabel("📍 Location:")
         location_label.setFont(self.med_font)
-        location_label.setStyleSheet("color: #00d4aa; font-weight: bold;")
+        location_label.setStyleSheet("color: #00d4aa; font-weight: bold; font-size: 12px;")
         
         self.location_display = QLabel("Lat: --, Lng: --")
         self.location_display.setFont(self.small_font)
         self.location_display.setAlignment(Qt.AlignLeft)
+        self.location_display.setMaximumHeight(30)
         self.location_display.setStyleSheet("""
             QLabel {
                 color: #cccccc;
@@ -818,6 +830,7 @@ class PollutionControlApp(QWidget):
                 border-radius: 5px;
                 padding: 5px;
                 border: 1px solid #00d4aa;
+                font-size: 10px;
             }
         """)
         
@@ -826,33 +839,35 @@ class PollutionControlApp(QWidget):
         
         # Contact selection row for SOS (always visible)
         self.contact_row = QHBoxLayout()
-        self.contact_row.setSpacing(10)
+        self.contact_row.setSpacing(8)
         
         contact_label = QLabel("📞 Emergency Contact:")
         contact_label.setFont(self.med_font)
-        contact_label.setStyleSheet("color: #00d4aa; font-weight: bold;")
+        contact_label.setStyleSheet("color: #00d4aa; font-weight: bold; font-size: 12px;")
         
         self.contact_dropdown = QComboBox()
         self.contact_dropdown.setFont(self.med_font)
         self.contact_dropdown.addItems(sorted(self.contacts.keys()))
+        self.contact_dropdown.setMaximumHeight(35)
         self.contact_dropdown.setStyleSheet("""
             QComboBox {
                 background-color: #1a2d3a;
                 color: white;
                 border: 2px solid #00d4aa;
-                border-radius: 8px;
-                padding: 5px;
+                border-radius: 6px;
+                padding: 4px;
                 font-weight: bold;
+                font-size: 11px;
             }
             QComboBox::drop-down {
                 border: none;
             }
             QComboBox::down-arrow {
                 image: none;
-                border-left: 5px solid transparent;
-                border-right: 5px solid transparent;
-                border-top: 5px solid #00d4aa;
-                margin-right: 5px;
+                border-left: 4px solid transparent;
+                border-right: 4px solid transparent;
+                border-top: 4px solid #00d4aa;
+                margin-right: 4px;
             }
             QComboBox QAbstractItemView {
                 background-color: #1a2d3a;
@@ -865,13 +880,15 @@ class PollutionControlApp(QWidget):
         self.contact_label = QLabel(self.contacts.get(self.contact_dropdown.currentText(), self.alert_phone))
         self.contact_label.setFont(self.small_font)
         self.contact_label.setAlignment(Qt.AlignLeft)
+        self.contact_label.setMaximumHeight(30)
         self.contact_label.setStyleSheet("""
             QLabel {
                 color: #cccccc;
-                background-color: #333333;
+                background-color: #2a2a2a;
                 border-radius: 5px;
-                padding: 5px;
+                padding: 4px;
                 border: 1px solid #555555;
+                font-size: 10px;
             }
         """)
         
@@ -881,35 +898,59 @@ class PollutionControlApp(QWidget):
         self.contact_row.addWidget(self.contact_label)
         
         # Contact row is now directly added to main layout
-        print(f"DEBUG: Contact dropdown has {self.contact_dropdown.count()} items")
-        print(f"DEBUG: Available contacts: {list(self.contacts.keys())}")
 
         self.result_label = QLabel("")
         self.result_label.setFont(self.small_font)
         self.result_label.setAlignment(Qt.AlignCenter)
+        self.result_label.setMaximumHeight(40)
         self.result_label.setStyleSheet("""
             QLabel {
                 color: #ffffff;
                 background-color: #2a2a2a;
-                border-radius: 8px;
-                padding: 8px;
-                border: 2px solid #ff6b35;
+                border-radius: 6px;
+                padding: 6px;
+                border: 2px solid #00d4aa;
                 font-weight: bold;
+                font-size: 11px;
             }
         """)
 
+        # Main layout with proper spacing
         v = QVBoxLayout()
+        v.setSpacing(8)
+        v.setContentsMargins(10, 10, 10, 10)
+        
+        # Add components in order
         v.addLayout(top_bar)
         v.addWidget(self.ppm_label)
         v.addWidget(self.last_update_label)
-        v.addWidget(self.status_label)
-        v.addWidget(self.firebase_status_label)
-        v.addWidget(self.signal_bar)
+        
+        # Status section
+        status_section = QVBoxLayout()
+        status_section.setSpacing(4)
+        status_section.addWidget(self.status_label)
+        status_section.addWidget(self.firebase_status_label)
+        status_section.addWidget(self.signal_bar)
+        v.addLayout(status_section)
+        
+        # Location section
         v.addLayout(location_row)
+        
+        # Busy indicator
         v.addWidget(self.busy_bar)
+        
+        # Action buttons
         v.addLayout(btn_row)
+        
+        # Contact selection
         v.addLayout(self.contact_row)
+        
+        # Result display
         v.addWidget(self.result_label)
+        
+        # Add stretch to push everything to top
+        v.addStretch()
+        
         self.setLayout(v)
 
         # signals
@@ -987,9 +1028,11 @@ class PollutionControlApp(QWidget):
                 background-color: {bg_color};
                 border: 3px solid {border_color};
                 border-radius: 15px;
-                padding: 20px;
-                margin: 10px;
+                padding: 15px;
+                margin: 5px;
+                font-size: 28px;
                 font-weight: bold;
+                min-height: 80px;
             }}
         """)
         
