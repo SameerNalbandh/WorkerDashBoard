@@ -42,6 +42,8 @@ from PyQt5.QtGui import QFont
 ZE03_SERIAL = "/dev/ttyS0"
 ZE03_BAUD = 9600
 
+# EC200U-CNAA on AMA5 port
+MODEM_PORT = "/dev/ttyAMA5"
 MODEM_BAUD = 115200
 
 SOS_SMS_TEXT = "SOS: Dangerous gas levels detected!"
@@ -311,10 +313,120 @@ class ModemController:
                 except Exception:
                     pass
 
+    def make_call(self, number, timeout=30):
+        """Make a call to the specified number"""
+        with self.lock:
+            ser = self._open()
+            try:
+                # Enable call progress notifications
+                ser.write(b"AT+QINDCFG=\"call\",1\r")
+                time.sleep(0.2)
+                ser.read(256)
+                
+                # Make the call
+                cmd = f'ATD{number};\r'.encode()
+                ser.write(cmd)
+                time.sleep(0.5)
+                
+                # Wait for call progress
+                deadline = time.time() + timeout
+                call_connected = False
+                while time.time() < deadline:
+                    chunk = ser.read(512)
+                    if chunk:
+                        response = chunk.decode(errors="ignore")
+                        if "OK" in response:
+                            call_connected = True
+                            break
+                        elif "ERROR" in response or "NO CARRIER" in response:
+                            return False, "Call failed to connect"
+                        elif "BUSY" in response:
+                            return False, "Number busy"
+                        elif "NO ANSWER" in response:
+                            return False, "No answer"
+                    time.sleep(0.1)
+                
+                if call_connected:
+                    # Wait a bit more to see if call actually connects
+                    time.sleep(2)
+                    status = self.get_call_status()
+                    if "progress" in status.lower():
+                        return True, "Call connected"
+                    else:
+                        return False, "Call disconnected"
+                else:
+                    return False, "Call timeout"
+            except Exception as e:
+                return False, f"Call error: {str(e)}"
+            finally:
+                try:
+                    ser.close()
+                except Exception:
+                    pass
+
+    def hang_up_call(self):
+        """Hang up the current call"""
+        with self.lock:
+            ser = self._open()
+            try:
+                ser.write(b"ATH\r")
+                time.sleep(0.5)
+                response = ser.read(512).decode(errors="ignore")
+                return "OK" in response or "ERROR" not in response
+            except Exception:
+                return False
+            finally:
+                try:
+                    ser.close()
+                except Exception:
+                    pass
+
+    def get_call_status(self):
+        """Get current call status"""
+        with self.lock:
+            ser = self._open()
+            try:
+                ser.write(b"AT+CPAS\r")
+                time.sleep(0.2)
+                response = ser.read(512).decode(errors="ignore")
+                for line in response.splitlines():
+                    if "+CPAS:" in line:
+                        status = line.split(":")[1].strip()
+                        status_map = {
+                            "0": "Ready",
+                            "1": "Unknown", 
+                            "2": "Ringing",
+                            "3": "Call in progress",
+                            "4": "Incoming call"
+                        }
+                        return status_map.get(status, "Unknown")
+                return "Unknown"
+            except Exception:
+                return "Error"
+            finally:
+                try:
+                    ser.close()
+                except Exception:
+                    pass
+
 # -----------------------------
 # Auto-detect modem
 # -----------------------------
 def auto_detect_modem(baud=MODEM_BAUD, timeout=2):
+    # Try AMA5 port first (EC200U-CNAA)
+    try:
+        ser = serial.Serial(MODEM_PORT, baudrate=baud, timeout=timeout)
+        ser.write(b"AT\r")
+        time.sleep(0.3)
+        resp = ser.read(128)
+        ser.close()
+        if b"OK" in resp:
+            print(f"[INFO] Found EC200U-CNAA modem on {MODEM_PORT}")
+            return MODEM_PORT
+    except Exception as e:
+        print(f"[INFO] AMA5 port not available: {e}")
+    
+    # Fallback to USB ports
     ports = sorted(glob.glob("/dev/ttyUSB*"))
     for p in ports:
         try:
@@ -339,6 +451,8 @@ class AppSignals(QObject):
     sms_result = pyqtSignal(bool, str)
     gnss_update = pyqtSignal(object)
     gsm_signal = pyqtSignal(object)
+    call_status = pyqtSignal(str)
+    call_timer = pyqtSignal(int)
 
 # -----------------------------
 # GUI App
@@ -357,10 +471,10 @@ class MinerMonitorApp(QWidget):
 
         self.message_ids = message_ids or DEFAULT_MESSAGE_IDS.copy()
 
-        self.title_font = QFont("Sans Serif", 14, QFont.Bold)
-        self.big_font = QFont("Sans Serif", 28, QFont.Bold)
-        self.med_font = QFont("Sans Serif", 12)
-        self.small_font = QFont("Sans Serif", 10)
+        self.title_font = QFont("Sans Serif", 12, QFont.Bold)
+        self.big_font = QFont("Sans Serif", 24, QFont.Bold)
+        self.med_font = QFont("Sans Serif", 10)
+        self.small_font = QFont("Sans Serif", 8)
 
         # Top bar
         top_bar = QHBoxLayout()
@@ -391,21 +505,38 @@ class MinerMonitorApp(QWidget):
         self.signal_bar.setFormat("Signal: %v")
 
         # Buttons
-        btn_row = QHBoxLayout()
+        btn_row1 = QHBoxLayout()
         self.sos_button = QPushButton("SOS")
         self.sos_button.setFont(self.med_font)
-        self.sos_button.setMinimumHeight(70)
-        self.sos_button.setStyleSheet("background-color: #c0392b; color: white; border-radius: 8px;")
+        self.sos_button.setMinimumHeight(50)
+        self.sos_button.setStyleSheet("background-color: #c0392b; color: white; border-radius: 6px;")
         self.sos_button.clicked.connect(self.on_sos_pressed)
 
-        self.send_button = QPushButton("Send Custom Message")
+        self.call_button = QPushButton("CALL")
+        self.call_button.setFont(self.med_font)
+        self.call_button.setMinimumHeight(50)
+        self.call_button.setStyleSheet("background-color: #27ae60; color: white; border-radius: 6px;")
+        self.call_button.clicked.connect(self.on_call_pressed)
+
+        btn_row1.addWidget(self.sos_button)
+        btn_row1.addWidget(self.call_button)
+
+        btn_row2 = QHBoxLayout()
+        self.send_button = QPushButton("SEND SMS")
         self.send_button.setFont(self.med_font)
-        self.send_button.setMinimumHeight(70)
-        self.send_button.setStyleSheet("background-color: #2e86de; color: white; border-radius: 8px;")
+        self.send_button.setMinimumHeight(50)
+        self.send_button.setStyleSheet("background-color: #2e86de; color: white; border-radius: 6px;")
         self.send_button.clicked.connect(self.on_send_pressed)
 
-        btn_row.addWidget(self.sos_button)
-        btn_row.addWidget(self.send_button)
+        self.hangup_button = QPushButton("HANG UP")
+        self.hangup_button.setFont(self.med_font)
+        self.hangup_button.setMinimumHeight(50)
+        self.hangup_button.setStyleSheet("background-color: #e74c3c; color: white; border-radius: 6px;")
+        self.hangup_button.clicked.connect(self.on_hangup_pressed)
+        self.hangup_button.setVisible(False)
+
+        btn_row2.addWidget(self.send_button)
+        btn_row2.addWidget(self.hangup_button)
 
         # Custom message controls
         custom_row = QHBoxLayout()
@@ -427,6 +558,16 @@ class MinerMonitorApp(QWidget):
         self.message_input.setFont(self.small_font)
         self.message_input.setPlaceholderText("Custom message...")
 
+        # Call status and timer
+        call_status_row = QHBoxLayout()
+        self.call_status_label = QLabel("Call Status: Ready")
+        self.call_status_label.setFont(self.small_font)
+        self.call_timer_label = QLabel("")
+        self.call_timer_label.setFont(self.small_font)
+        self.call_timer_label.setAlignment(Qt.AlignRight)
+        call_status_row.addWidget(self.call_status_label)
+        call_status_row.addWidget(self.call_timer_label)
+
         # GNSS row
         gnss_row = QHBoxLayout()
         self.loc_label = QLabel("Location: --")
@@ -447,7 +588,9 @@ class MinerMonitorApp(QWidget):
         v.addWidget(self.last_update_label)
         v.addWidget(self.status_label)
         v.addWidget(self.signal_bar)
-        v.addLayout(btn_row)
+        v.addLayout(btn_row1)
+        v.addLayout(btn_row2)
+        v.addLayout(call_status_row)
         v.addLayout(custom_row)
         v.addWidget(self.message_input)
         v.addLayout(gnss_row)
@@ -460,6 +603,8 @@ class MinerMonitorApp(QWidget):
         self.signals.sms_result.connect(self.on_sms_result)
         self.signals.gnss_update.connect(self.on_gnss_update)
         self.signals.gsm_signal.connect(self.on_gsm_signal)
+        self.signals.call_status.connect(self.update_call_status)
+        self.signals.call_timer.connect(self.update_call_timer)
 
         self.ze03_parser = ZE03Parser()
         self.reader_thread = threading.Thread(target=self.ze03_worker, daemon=True)
@@ -470,7 +615,13 @@ class MinerMonitorApp(QWidget):
         self.timer.timeout.connect(self.periodic_tasks)
         self.timer.start()
 
+        # Call state variables
         self._busy = False
+        self._call_in_progress = False
+        self._call_start_time = None
+        self._call_timer = QTimer()
+        self._call_timer.setInterval(1000)  # Update every second
+        self._call_timer.timeout.connect(self.update_call_timer_display)
 
     # slots
     def _update_phone_display(self):
@@ -505,6 +656,30 @@ class MinerMonitorApp(QWidget):
         else:
             self.signal_bar.setValue(val)
             self.status_label.setText(f"Modem: Online | Signal: {val}")
+
+    def update_call_status(self, status):
+        self.call_status_label.setText(f"Call Status: {status}")
+        if status == "Call in progress":
+            self._call_in_progress = True
+            self._call_start_time = time.time()
+            self.hangup_button.setVisible(True)
+            self.call_button.setVisible(False)
+            self._call_timer.start()
+        elif status in ["Ready", "Call failed", "Call ended"]:
+            self._call_in_progress = False
+            self._call_start_time = None
+            self.hangup_button.setVisible(False)
+            self.call_button.setVisible(True)
+            self._call_timer.stop()
+            self.call_timer_label.setText("")
+
+    def update_call_timer(self, seconds):
+        self.call_timer_label.setText(f"Call Time: {seconds}s")
+
+    def update_call_timer_display(self):
+        if self._call_in_progress and self._call_start_time:
+            elapsed = int(time.time() - self._call_start_time)
+            self.call_timer_label.setText(f"Call Time: {elapsed}s")
 
     def ze03_worker(self):
         while True:
@@ -542,6 +717,7 @@ class MinerMonitorApp(QWidget):
             self._busy = busy
             self.sos_button.setDisabled(busy)
             self.send_button.setDisabled(busy)
+            self.call_button.setDisabled(busy)
             self.manage_ids_btn.setDisabled(busy)
             self.loc_btn.setDisabled(busy)
             self.result_label.setText(text)
@@ -566,6 +742,21 @@ class MinerMonitorApp(QWidget):
             threading.Thread(target=self._send_custom_thread, args=(number, text), daemon=True).start()
         self._confirm_and_run("Send custom SMS?", confirmed)
 
+    def on_call_pressed(self):
+        key = self.id_dropdown.currentText()
+        number = self.message_ids.get(key)
+        if not number:
+            QMessageBox.warning(self, "No number", "Selected ID has no phone number assigned.")
+            return
+        def confirmed():
+            threading.Thread(target=self._make_call_thread, args=(number,), daemon=True).start()
+        self._confirm_and_run(f"Call {number}?", confirmed)
+
+    def on_hangup_pressed(self):
+        def confirmed():
+            threading.Thread(target=self._hangup_call_thread, daemon=True).start()
+        self._confirm_and_run("Hang up call?", confirmed)
+
     def _confirm_and_run(self, prompt, fn_if_yes):
         r = QMessageBox.question(self, "Confirm", prompt, QMessageBox.Yes | QMessageBox.No)
         if r == QMessageBox.Yes:
@@ -587,6 +778,29 @@ class MinerMonitorApp(QWidget):
         self.set_busy(True, "Sending message...")
         ok, raw = self.modem_ctrl.send_sms_textmode(number, text, timeout=10)
         self.signals.sms_result.emit(ok, raw)
+        self.set_busy(False, "")
+
+    def _make_call_thread(self, number):
+        self.set_busy(True, "Initiating call...")
+        self.signals.call_status.emit("Ringing")
+        
+        success, message = self.modem_ctrl.make_call(number, timeout=30)
+        
+        if success:
+            self.signals.call_status.emit("Call in progress")
+            self.set_busy(False, "")
+        else:
+            self.signals.call_status.emit("Call failed")
+            self.set_busy(False, "")
+            QMessageBox.warning(self, "Call Failed", f"Failed to make call: {message}")
+
+    def _hangup_call_thread(self):
+        self.set_busy(True, "Hanging up...")
+        success = self.modem_ctrl.hang_up_call()
+        if success:
+            self.signals.call_status.emit("Call ended")
+        else:
+            self.signals.call_status.emit("Hangup failed")
         self.set_busy(False, "")
 
     def on_sms_result(self, ok, raw):
@@ -657,7 +871,7 @@ def main():
 
     modem_port = auto_detect_modem(baud=MODEM_BAUD, timeout=2)
     if modem_port is None:
-        print("ERROR: No modem found on /dev/ttyUSB*")
+        print("ERROR: No modem found on AMA5 or USB ports")
         sys.exit(1)
 
     modem = ModemController(modem_port, MODEM_BAUD, timeout=2)
