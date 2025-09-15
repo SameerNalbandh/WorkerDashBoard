@@ -1,22 +1,21 @@
- #!/usr/bin/env python3
+#!/usr/bin/env python3
 """
-MinerDashboard_refactored_beautiful_ui.py
+WorkerDashboard.py (Miner Safety Monitor)
 
-Refactored dashboard:
-- ZE03-CO on UART reader (robust 9-byte frame parsing)
-- Quectel EC200U modem fixed to /dev/ttyAMA5 for SMS & Calls
-- SOS, Custom SMS, Call (accept detection -> call dialog + timer + hangup; decline -> immediate declined state)
-- Virtual touchscreen keyboard for custom message input
-- Removed any signal-strength / GPS UI/code
-- Polished UI/UX with card layout, rounded buttons and clearer fonts
-
-Notes:
-- AT port fixed at /dev/ttyAMA5 as requested.
-- Keep an eye on permissions for serial ports (run as root or add user to dialout).
+Touch-screen friendly dashboard (4.3") for:
+- Winsen ZE03-CO (UART)
+- Quectel EC200U (USB) for SMS, GNSS
+Features:
+- SOS (predefined SMS)
+- Custom message (dropdown IDs -> assignable phone numbers)
+- Live GNSS location
+- Touch-friendly UI, no emojis, no uploads
+- Robust SMS logic (10s wait). UI loading state & success/fail notifications.
+- GUI updates via Qt signals to avoid painter conflicts.
 """
 
 import os
-os.environ["QT_QPA_PLATFORM"] = "xcb"
+os.environ["QT_QPA_PLATFORM"] = "xcb"   # prefer XCB backend (avoid Wayland issues)
 
 import sys
 import time
@@ -24,6 +23,7 @@ import threading
 import queue
 import traceback
 from datetime import datetime
+import glob
 
 import serial
 from serial import SerialException
@@ -31,380 +31,317 @@ from serial import SerialException
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QObject
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QLabel, QPushButton, QVBoxLayout, QHBoxLayout,
-    QMessageBox, QComboBox, QLineEdit, QDialog, QGridLayout, QFrame, QSizePolicy
+    QMessageBox, QProgressBar, QComboBox, QLineEdit, QDialog, QFormLayout,
+    QDialogButtonBox, QSizePolicy
 )
 from PyQt5.QtGui import QFont
 
 # -----------------------------
 # CONFIG
 # -----------------------------
-ZE03_SERIAL = "/dev/ttyS0"  # sensor port; change if needed
+ZE03_SERIAL = "/dev/ttyS0"
 ZE03_BAUD = 9600
 
-MODEM_SERIAL = "/dev/ttyAMA5"  # fixed per your note
 MODEM_BAUD = 115200
-
-APP_TITLE = "Miner Safety Monitor"
-WINDOW_WIDTH = 800
-WINDOW_HEIGHT = 480
 
 SOS_SMS_TEXT = "SOS: Dangerous gas levels detected!"
 PPM_WARN = 40
-PPM_DANGER = 50
+PPM_DANGER = 50A
 
-SMS_MIN_INTERVAL = 8  # seconds between SMS sends
-CALL_TIMEOUT = 35     # seconds to wait for CONNECT
+APP_TITLE = "Miner Safety Monitor"
+WINDOW_WIDTH = 480
+WINDOW_HEIGHT = 320
 
+# Predefined message IDs
 DEFAULT_MESSAGE_IDS = {
     "sameer": "+919825186687",
     "ramsha": "+918179489703",
-    "surya":  "+917974560541",
+    "surya" : "+917974560541",
     "anupam": "+917905030839",
-    "shanmukesh": "+919989278339",
-    "kartika": "+919871390413"
+    "shanmukesh":"+919989278339",
+    "kartika":"+919871390413"
 }
 
 # -----------------------------
-# Signals
+# Utilities
 # -----------------------------
-class AppSignals(QObject):
-    ppm_update = pyqtSignal(int)
-    modem_status = pyqtSignal(str)
-    sms_result = pyqtSignal(bool, str)
-    call_state = pyqtSignal(str, str)  # state, raw
+def current_ts():
+    return datetime.utcnow().isoformat() + "Z"
 
 # -----------------------------
-# Serial Reader
+# ZE03 Parser
+# -----------------------------
+class ZE03Parser:
+    def __init__(self):
+        self.buf = bytearray()
+
+    def feed(self, data_bytes):
+        self.buf.extend(data_bytes)
+
+    def extract_frames(self):
+        results = []
+        buf = self.buf
+        i = 0
+        while i + 9 <= len(buf):
+            if buf[i] != 0xFF:
+                i += 1
+                continue
+            frame = buf[i:i+9]
+            checksum = (~sum(frame[1:8]) + 1) & 0xFF
+            if frame[1] == 0x86 and checksum == frame[8]:
+                ppm = (frame[2] << 8) | frame[3]
+                results.append((ppm, bytes(frame)))
+                i += 9
+            else:
+                i += 1
+        if i > 0:
+            del buf[:i]
+        return results
+
+# -----------------------------
+# Serial Reader (for ZE03)
 # -----------------------------
 class SerialReaderThread(threading.Thread):
-    def __init__(self, device, baud, out_q, reconnect_delay=2):
-        super().__init__(daemon=True)
+    def __init__(self, device, baud, out_queue, name="SerialReader", reconnect_delay=3):
+        super().__init__(daemon=True, name=name)
         self.device = device
         self.baud = baud
-        self.out_q = out_q
+        self.out_queue = out_queue
         self.reconnect_delay = reconnect_delay
-        self._stop = threading.Event()
+        self._stop_event = threading.Event()
+
     def stop(self):
-        self._stop.set()
+        self._stop_event.set()
+
+    def stopped(self):
+        return self._stop_event.is_set()
+
     def run(self):
         ser = None
-        while not self._stop.is_set():
+        while not self.stopped():
             try:
                 if ser is None:
                     ser = serial.Serial(self.device, self.baud, timeout=1)
-                    try: ser.reset_input_buffer()
-                    except Exception: pass
+                    ser.reset_input_buffer()
                 b = ser.read(256)
                 if b:
-                    try: self.out_q.put(b, timeout=0.5)
-                    except Exception: pass
+                    self.out_queue.put(b)
             except SerialException as e:
                 try:
-                    self.out_q.put(b"__ZE03_SERIAL_ERROR__:" + str(e).encode(), timeout=0.5)
+                    self.out_queue.put(b"__SERIAL_ERROR__: " + str(e).encode())
                 except Exception:
                     pass
                 try:
-                    if ser: ser.close()
+                    if ser:
+                        ser.close()
                 except Exception:
                     pass
                 ser = None
                 time.sleep(self.reconnect_delay)
             except Exception as e:
                 try:
-                    self.out_q.put(b"__ZE03_EXCEPTION__:" + str(e).encode(), timeout=0.5)
+                    self.out_queue.put(b"__SERIAL_EXCEPTION__: " + str(e).encode())
                 except Exception:
                     pass
                 time.sleep(self.reconnect_delay)
         try:
-            if ser: ser.close()
+            if ser:
+                ser.close()
         except Exception:
             pass
 
 # -----------------------------
-# ModemController
+# Modem controller (EC200U)
 # -----------------------------
 class ModemController:
-    def __init__(self, dev=MODEM_SERIAL, baud=MODEM_BAUD, timeout=2):
+    def __init__(self, dev, baud=MODEM_BAUD, timeout=2):
         self.dev = dev
         self.baud = baud
         self.timeout = timeout
         self.lock = threading.Lock()
-        self._last_sms_ts = 0
 
     def _open(self):
-        return serial.Serial(self.dev, self.baud, timeout=1)
+        return serial.Serial(self.dev, self.baud, timeout=self.timeout)
 
-    def is_alive(self):
-        try:
-            with self.lock:
-                ser = self._open()
-                try:
-                    ser.write(b"AT\r"); ser.flush()
-                    deadline = time.time() + 1.5
-                    out = bytearray()
-                    while time.time() < deadline:
-                        chunk = ser.read(256)
-                        if chunk:
-                            out.extend(chunk)
-                            if b"OK" in out: break
-                        else:
-                            time.sleep(0.02)
-                    return b"OK" in out
-                finally:
-                    try: ser.close()
-                    except Exception: pass
-        except Exception:
-            return False
-
-    def send_sms_textmode(self, number, text, timeout=12):
-        now = time.time()
-        if now - self._last_sms_ts < SMS_MIN_INTERVAL:
-            return False, f"Rate limit: wait {int(SMS_MIN_INTERVAL - (now - self._last_sms_ts))}s"
+    def send_at(self, cmd, wait_for=b"OK", timeout=None):
         with self.lock:
+            out = bytearray()
+            ser = self._open()
             try:
-                ser = self._open()
-            except Exception as e:
-                return False, f"open_failed:{e}"
-            try:
-                ser.write(b"AT+CMGF=1\r"); ser.flush()
-                time.sleep(0.08)
-                _ = ser.read(ser.in_waiting or 1)
-                ser.write(f'AT+CMGS="{number}"\r'.encode()); ser.flush()
-                deadline = time.time() + 6
-                buf = bytearray()
-                saw = False
+                ser.write((cmd + "\r").encode())
+                deadline = time.time() + (timeout or self.timeout)
                 while time.time() < deadline:
                     chunk = ser.read(512)
                     if chunk:
-                        buf.extend(chunk)
-                        if b'>' in buf:
-                            saw = True; break
-                        s = buf.decode(errors="ignore").upper()
-                        if "ERROR" in s:
-                            return False, s
+                        out.extend(chunk)
+                        if wait_for and wait_for in out:
+                            break
                     else:
                         time.sleep(0.05)
-                if not saw:
-                    return False, buf.decode(errors="ignore")
-                ser.write(text.encode() + b"\x1A"); ser.flush()
+                return bytes(out)
+            finally:
+                ser.close()
+
+    def is_alive(self):
+        try:
+            resp = self.send_at("AT", wait_for=b"OK", timeout=2)
+            return b"OK" in resp
+        except Exception:
+            return False
+
+    def get_signal_quality(self):
+        try:
+            resp = self.send_at("AT+CSQ", wait_for=b"OK", timeout=2)
+            s = resp.decode(errors="ignore")
+            for line in s.splitlines():
+                if "+CSQ" in line:
+                    parts = line.split(":")[1].strip().split(",")
+                    return int(parts[0])
+        except Exception:
+            return None
+
+    def send_sms_textmode(self, number, text, timeout=10):
+        with self.lock:
+            ser = self._open()
+            try:
+                ser.write(b"AT+CMGF=1\r")
+                time.sleep(0.2)
+                _ = ser.read(512)
+
+                cmd = f'AT+CMGS="{number}"\r'.encode()
+                ser.write(cmd)
+
+                # wait for '>' prompt
+                deadline = time.time() + 5
+                buf = bytearray()
+                while time.time() < deadline:
+                    chunk = ser.read(256)
+                    if chunk:
+                        buf.extend(chunk)
+                        if b">" in buf:
+                            break
+                    else:
+                        time.sleep(0.05)
+
+                ser.write(text.encode() + b"\x1A")
+
+                # wait for result
                 resp = bytearray()
                 deadline = time.time() + timeout
                 while time.time() < deadline:
                     chunk = ser.read(512)
                     if chunk:
                         resp.extend(chunk)
-                        s = resp.decode(errors="ignore").upper()
-                        if "+CMGS" in s or "OK" in s or "ERROR" in s:
+                        if b"+CMGS" in resp or b"OK" in resp or b"ERROR" in resp or b"+CMS ERROR" in resp:
                             break
                     else:
                         time.sleep(0.05)
+
                 s = resp.decode(errors="ignore")
-                if "ERROR" in s and "+CMGS" not in s:
+                if "ERROR" in s or "+CMS ERROR" in s:
                     return False, s
                 if "+CMGS" in s or "OK" in s:
-                    self._last_sms_ts = time.time()
                     return True, s
-                return False, s
+                return True, s
             except Exception as e:
                 return False, str(e)
             finally:
-                try: ser.close()
-                except Exception: pass
+                try:
+                    ser.close()
+                except Exception:
+                    pass
 
-    def make_call_blocking(self, number, state_callback):
-        """
-        Improved call handling for EC200U:
-        - DIALING -> immediately after ATD
-        - FAILED  -> declined (NO CARRIER before CONNECT)
-        - ACTIVE  -> call accepted
-        - HANGUP  -> after connect, call ended
-        - IDLE    -> cleanup
-        """
-        try:
-            ser = serial.Serial(self.dev, self.baud, timeout=1)
-        except Exception as e:
-            state_callback("FAILED", f"open_failed:{e}")
-            return
+    def start_gnss(self):
+        try_cmds = ["AT+QGNSS=1", "AT+QGPS=1", "AT+CGNSPWR=1"]
+        results = {}
+        for cmd in try_cmds:
+            try:
+                raw = self.send_at(cmd, wait_for=b"OK", timeout=1)
+                results[cmd] = raw.decode(errors="ignore")
+            except Exception as e:
+                results[cmd] = f"ERR:{e}"
+        return results
 
+    def get_gnss_location(self, timeout=6):
+        with self.lock:
+            ser = self._open()
+            try:
+                ser.write(b"AT+QGNSSLOC?\r")
+                time.sleep(1)
+                out = ser.read_all().decode(errors="ignore")
+                for line in out.splitlines():
+                    if line.startswith("+QGNSSLOC:"):
+                        parts = line.split(":")[1].strip().split(",")
+                        try:
+                            lat = float(parts[1])
+                            lon = float(parts[2])
+                            return {"lat": lat, "lon": lon, "raw": out}
+                        except Exception:
+                            pass
+
+                ser.write(b"AT+QGPSLOC?\r")
+                time.sleep(1)
+                out = ser.read_all().decode(errors="ignore")
+                for line in out.splitlines():
+                    if line.startswith("+QGPSLOC:"):
+                        parts = line.split(":")[1].strip().split(",")
+                        try:
+                            lat = float(parts[1])
+                            lon = float(parts[2])
+                            return {"lat": lat, "lon": lon, "raw": out}
+                        except Exception:
+                            pass
+
+                ser.write(b"AT+CGNSINF\r")
+                time.sleep(1)
+                out = ser.read_all().decode(errors="ignore")
+                for line in out.splitlines():
+                    if line.startswith("+CGNSINF:"):
+                        fields = line.split(":")[1].strip().split(",")
+                        if fields[1] == "1":
+                            lat = float(fields[3])
+                            lon = float(fields[4])
+                            return {"lat": lat, "lon": lon, "raw": out}
+                return None
+            except Exception:
+                return None
+            finally:
+                try:
+                    ser.close()
+                except Exception:
+                    pass
+
+# -----------------------------
+# Auto-detect modem
+# -----------------------------
+def auto_detect_modem(baud=MODEM_BAUD, timeout=2):
+    ports = sorted(glob.glob("/dev/ttyUSB*"))
+    for p in ports:
         try:
-            ser.reset_input_buffer()
+            ser = serial.Serial(p, baudrate=baud, timeout=timeout)
+            ser.write(b"AT\r")
+            time.sleep(0.3)
+            resp = ser.read(128)
+            ser.close()
+            if b"OK" in resp:
+                print(f"[INFO] Found modem on {p}")
+                return p
         except Exception:
             pass
-
-        ser.write((f"ATD{number};\r").encode())
-        ser.flush()
-        state_callback("DIALING", "")
-        start = time.time()
-        connected = False
-
-        while time.time() - start < CALL_TIMEOUT:
-            line = ser.readline()
-            if not line:
-                time.sleep(0.1)
-                continue
-            s = line.decode(errors="ignore").strip().upper()
-            if not s:
-                continue
-            # connected tokens
-            if "CONNECT" in s or "VOICE" in s:
-                connected = True
-                state_callback("ACTIVE", s)
-                break
-            # declined/failure tokens before connect
-            if any(tok in s for tok in ("NO CARRIER", "BUSY", "NO DIALTONE", "+CME ERROR", "ERROR")):
-                if not connected:
-                    state_callback("FAILED", s)
-                    try: ser.close()
-                    except Exception: pass
-                    return
-
-        if not connected:
-            state_callback("FAILED", "TIMEOUT")
-            try: ser.close()
-            except Exception: pass
-            return
-
-        # connected: wait for hangup
-        while True:
-            line = ser.readline()
-            if not line:
-                time.sleep(0.2)
-                continue
-            s = line.decode(errors="ignore").strip().upper()
-            if not s:
-                continue
-            if any(tok in s for tok in ("NO CARRIER", "BUSY", "+CME ERROR", "ERROR", "CLOSED")):
-                state_callback("HANGUP", s)
-                break
-
-        state_callback("IDLE", "")
-        try: ser.close()
-        except Exception: pass
-
-    def hangup(self):
-        with self.lock:
-            try:
-                ser = serial.Serial(self.dev, self.baud, timeout=1)
-            except Exception:
-                return False
-            try:
-                ser.write(b"ATH\r"); ser.flush()
-                time.sleep(0.1)
-                ser.close()
-                return True
-            except Exception:
-                try: ser.close()
-                except Exception: pass
-                return False
+    return None
 
 # -----------------------------
-# Virtual Keyboard
+# GUI Signals
 # -----------------------------
-class VirtualKeyboard(QWidget):
-    def __init__(self, target_lineedit, parent=None):
-        super().__init__(parent, flags=Qt.Window | Qt.WindowStaysOnTopHint)
-        self.target = target_lineedit
-        self.shift = False
-        self.setWindowTitle("Keyboard")
-        self.setStyleSheet("background:#121212;color:#fff;border-radius:8px;")
-        self.setFixedHeight(260)
-        grid = QGridLayout()
-        rows = ["qwertyuiop", "asdfghjkl", "zxcvbnm"]
-        r = 0
-        for row in rows:
-            c = 0
-            for ch in row:
-                btn = QPushButton(ch.upper() if self.shift else ch)
-                btn.setFixedSize(48,48)
-                btn.setStyleSheet("background:#1f1f1f;color:#fff;border-radius:10px;")
-                btn.clicked.connect(lambda _, x=ch: self._press(x))
-                grid.addWidget(btn, r, c)
-                c += 1
-            r += 1
-        # numbers
-        numrow = "1234567890"
-        c = 0
-        for ch in numrow:
-            btn = QPushButton(ch)
-            btn.setFixedSize(44,44)
-            btn.setStyleSheet("background:#1f1f1f;color:#fff;border-radius:10px;")
-            btn.clicked.connect(lambda _, x=ch: self._press(x))
-            grid.addWidget(btn, r, c)
-            c += 1
-        r += 1
-        self.shift_btn = QPushButton("Shift"); self.shift_btn.setFixedSize(90,48); self.shift_btn.clicked.connect(self._toggle_shift)
-        self.space_btn = QPushButton("Space"); self.space_btn.setFixedSize(300,48); self.space_btn.clicked.connect(lambda: self._press(" "))
-        self.back_btn = QPushButton("⌫"); self.back_btn.setFixedSize(90,48); self.back_btn.clicked.connect(self._back)
-        self.enter_btn = QPushButton("Enter"); self.enter_btn.setFixedSize(90,48); self.enter_btn.clicked.connect(self._enter)
-        grid.addWidget(self.shift_btn, r, 0, 1, 2)
-        grid.addWidget(self.space_btn, r, 2, 1, 6)
-        grid.addWidget(self.back_btn, r, 8, 1, 1)
-        grid.addWidget(self.enter_btn, r, 9, 1, 1)
-        self.setLayout(grid)
-    def _press(self, ch):
-        c = ch.upper() if self.shift else ch
-        cur = self.target.text(); self.target.setText(cur + c)
-    def _back(self):
-        cur = self.target.text(); self.target.setText(cur[:-1])
-    def _enter(self):
-        self.hide(); self.target.clearFocus()
-    def _toggle_shift(self):
-        self.shift = not self.shift
+class AppSignals(QObject):
+    ppm_update = pyqtSignal(int)
+    modem_status = pyqtSignal(str)
+    sms_result = pyqtSignal(bool, str)
+    gnss_update = pyqtSignal(object)
+    gsm_signal = pyqtSignal(object)
 
 # -----------------------------
-# Loading & Call Dialogs
-# -----------------------------
-class LoadingDialog(QDialog):
-    def __init__(self, title, msg, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle(title)
-        self.setModal(True)
-        self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
-        self.setStyleSheet("background:#0f0f0f;color:#fff;")
-        self.resize(420,140)
-        v = QVBoxLayout()
-        self.msg = QLabel(msg); self.msg.setAlignment(Qt.AlignCenter); self.msg.setWordWrap(True)
-        self.ind = QLabel("⟳ Working..."); self.ind.setAlignment(Qt.AlignCenter)
-        v.addWidget(self.msg); v.addWidget(self.ind)
-        self.close_btn = QPushButton("Close"); self.close_btn.clicked.connect(self.accept); self.close_btn.setVisible(False)
-        h = QHBoxLayout(); h.addStretch(); h.addWidget(self.close_btn); v.addLayout(h)
-        self.setLayout(v)
-    def set_message(self, m): self.msg.setText(m)
-    def set_done(self, ok, extra=""):
-        self.close_btn.setVisible(True)
-        self.msg.setText(("Success: " if ok else "Failed: ") + (extra or ""))
-
-class CallDialog(QDialog):
-    def __init__(self, number, hangup_cb, close_cb, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle(f"In call: {number}")
-        self.setModal(True)
-        self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
-        self.setStyleSheet("background:#0f0f0f;color:#fff;")
-        self.resize(420,220)
-        v = QVBoxLayout()
-        title = QLabel(f"In call: {number}"); title.setFont(QFont("Sans",14,QFont.Bold)); title.setAlignment(Qt.AlignCenter)
-        self.timer_lbl = QLabel("00:00"); self.timer_lbl.setFont(QFont("Sans",36,QFont.Bold)); self.timer_lbl.setAlignment(Qt.AlignCenter)
-        v.addWidget(title); v.addWidget(self.timer_lbl)
-        h = QHBoxLayout()
-        self.hang = QPushButton("Hang Up"); self.hang.setMinimumHeight(52); self.hang.clicked.connect(hangup_cb)
-        self.hang.setStyleSheet("background:#c0392b;color:#fff;border-radius:10px;font-weight:bold;")
-        self.close = QPushButton("Close App"); self.close.setMinimumHeight(52); self.close.clicked.connect(close_cb)
-        h.addWidget(self.hang); h.addWidget(self.close)
-        v.addLayout(h)
-        self.setLayout(v)
-        self._start = None
-        self._timer = QTimer(); self._timer.timeout.connect(self._tick); self._timer.setInterval(1000)
-    def start_timer(self): self._start = time.time(); self._timer.start()
-    def stop_timer(self): self._timer.stop(); self._start = None; self.timer_lbl.setText("00:00")
-    def _tick(self):
-        if not self._start: return
-        elapsed = int(time.time() - self._start)
-        m, s = divmod(elapsed, 60)
-        self.timer_lbl.setText(f"{m:02d}:{s:02d}")
-
-# -----------------------------
-# Main GUI App
+# GUI App
 # -----------------------------
 class MinerMonitorApp(QWidget):
     def __init__(self, ze03_q, modem_ctrl, message_ids=None):
@@ -414,307 +351,328 @@ class MinerMonitorApp(QWidget):
         self.signals = AppSignals()
         self.setWindowTitle(APP_TITLE)
         self.resize(WINDOW_WIDTH, WINDOW_HEIGHT)
-        self.setStyleSheet("background-color: #0b0b0b; color: #fff;")
+        self.setStyleSheet("background-color: #111; color: #fff;")
+        self._last_ppm = None
+        self._last_frame_time = time.time()
 
         self.message_ids = message_ids or DEFAULT_MESSAGE_IDS.copy()
 
-        # fonts
-        self.title_font = QFont("Sans Serif", 18, QFont.Bold)
-        self.big_font = QFont("Sans Serif", 48, QFont.Bold)
-        self.med_font = QFont("Sans Serif", 14)
-        self.small_font = QFont("Sans Serif", 11)
+        self.title_font = QFont("Sans Serif", 14, QFont.Bold)
+        self.big_font = QFont("Sans Serif", 28, QFont.Bold)
+        self.med_font = QFont("Sans Serif", 12)
+        self.small_font = QFont("Sans Serif", 10)
 
-        # top bar
-        top = QHBoxLayout()
-        title = QLabel("MINER SAFETY"); title.setFont(self.title_font); title.setAlignment(Qt.AlignLeft)
-        title.setStyleSheet("color:#f5f5f5;padding:8px;")
-        top.addWidget(title)
-        top.addStretch()
-        close_btn = QPushButton("⨉"); close_btn.setFixedSize(44,44); close_btn.clicked.connect(self._confirm_close)
-        close_btn.setStyleSheet("background:#1f1f1f;color:#fff;border-radius:8px;font-weight:bold;")
-        top.addWidget(close_btn)
+        # Top bar
+        top_bar = QHBoxLayout()
+        self.title_label = QLabel("MINER SAFETY")
+        self.title_label.setFont(self.title_font)
+        self.title_label.setAlignment(Qt.AlignCenter)
+        close_btn = QPushButton("Close")
+        close_btn.setFont(self.med_font)
+        close_btn.setFixedHeight(34)
+        close_btn.clicked.connect(self.close)
+        top_bar.addWidget(self.title_label, 1)
+        top_bar.addWidget(close_btn)
 
-        # main cards
-        # left: PPM card
-        ppm_card = QFrame(); ppm_card.setStyleSheet("background:#121212;border-radius:12px;padding:12px;")
-        ppm_layout = QVBoxLayout()
-        self.ppm_label = QLabel("---"); self.ppm_label.setFont(self.big_font); self.ppm_label.setAlignment(Qt.AlignCenter)
-        self.ppm_label.setStyleSheet("color:#9ae6b4;")
-        self.last_update_label = QLabel("Last: --"); self.last_update_label.setFont(self.small_font); self.last_update_label.setAlignment(Qt.AlignCenter)
-        ppm_layout.addWidget(QLabel("CO (PPM)")); ppm_layout.addWidget(self.ppm_label); ppm_layout.addWidget(self.last_update_label)
-        ppm_card.setLayout(ppm_layout)
+        self.ppm_label = QLabel("PPM: ---")
+        self.ppm_label.setFont(self.big_font)
+        self.ppm_label.setAlignment(Qt.AlignCenter)
 
-        # right: actions card
-        actions_card = QFrame(); actions_card.setStyleSheet("background:#121212;border-radius:12px;padding:12px;")
-        actions_layout = QVBoxLayout()
-        # big buttons row
-        row = QHBoxLayout()
-        self.sos_button = QPushButton("SOS"); self.sos_button.setFixedHeight(80); self.sos_button.setFont(self.med_font)
-        self.sos_button.setStyleSheet("background:#e53e3e;color:#fff;border-radius:12px;font-weight:bold;")
+        self.last_update_label = QLabel("Last update: --")
+        self.last_update_label.setFont(self.small_font)
+        self.last_update_label.setAlignment(Qt.AlignCenter)
+
+        self.status_label = QLabel("Modem: -- | Signal: --")
+        self.status_label.setFont(self.small_font)
+        self.status_label.setAlignment(Qt.AlignCenter)
+
+        self.signal_bar = QProgressBar()
+        self.signal_bar.setRange(0, 31)
+        self.signal_bar.setFormat("Signal: %v")
+
+        # Buttons
+        btn_row = QHBoxLayout()
+        self.sos_button = QPushButton("SOS")
+        self.sos_button.setFont(self.med_font)
+        self.sos_button.setMinimumHeight(70)
+        self.sos_button.setStyleSheet("background-color: #c0392b; color: white; border-radius: 8px;")
         self.sos_button.clicked.connect(self.on_sos_pressed)
-        self.send_button = QPushButton("Send Message"); self.send_button.setFixedHeight(80); self.send_button.setFont(self.med_font)
-        self.send_button.setStyleSheet("background:#2b6cb0;color:#fff;border-radius:12px;font-weight:bold;")
+
+        self.send_button = QPushButton("Send Custom Message")
+        self.send_button.setFont(self.med_font)
+        self.send_button.setMinimumHeight(70)
+        self.send_button.setStyleSheet("background-color: #2e86de; color: white; border-radius: 8px;")
         self.send_button.clicked.connect(self.on_send_pressed)
-        self.call_button = QPushButton("Call"); self.call_button.setFixedHeight(80); self.call_button.setFont(self.med_font)
-        self.call_button.setStyleSheet("background:#2f855a;color:#fff;border-radius:12px;font-weight:bold;")
-        self.call_button.clicked.connect(self.on_call_pressed)
-        row.addWidget(self.sos_button); row.addWidget(self.send_button); row.addWidget(self.call_button)
 
-        actions_layout.addLayout(row)
-        # id + phone
-        id_row = QHBoxLayout()
-        self.id_dropdown = QComboBox(); self.id_dropdown.setFont(self.med_font); self.id_dropdown.addItems(sorted(self.message_ids.keys()))
-        self.phone_display = QLabel(self.message_ids.get(self.id_dropdown.currentText(), "")); self.phone_display.setFont(self.small_font)
+        btn_row.addWidget(self.sos_button)
+        btn_row.addWidget(self.send_button)
+
+        # Custom message controls
+        custom_row = QHBoxLayout()
+        self.id_dropdown = QComboBox()
+        self.id_dropdown.setFont(self.med_font)
+        self.id_dropdown.addItems(sorted(self.message_ids.keys()))
+        self.phone_display = QLabel(self.message_ids.get(self.id_dropdown.currentText(), ""))
+        self.phone_display.setFont(self.small_font)
+        self.manage_ids_btn = QPushButton("Manage IDs")
+        self.manage_ids_btn.setFont(self.small_font)
+        self.manage_ids_btn.clicked.connect(self.manage_ids_dialog)
         self.id_dropdown.currentIndexChanged.connect(self._update_phone_display)
-        id_row.addWidget(self.id_dropdown); id_row.addWidget(self.phone_display)
-        actions_layout.addLayout(id_row)
 
-        # message input
-        self.message_input = QLineEdit(); self.message_input.setPlaceholderText("Custom message..."); self.message_input.setFont(self.small_font)
-        self.message_input.setFixedHeight(44)
-        self.message_input.setStyleSheet("background:#0b0b0b;border:1px solid #222;color:#fff;padding:8px;border-radius:8px;")
-        self.keyboard = VirtualKeyboard(self.message_input, parent=self)
-        self.message_input.mousePressEvent = self._show_keyboard
-        actions_layout.addWidget(self.message_input)
+        custom_row.addWidget(self.id_dropdown)
+        custom_row.addWidget(self.phone_display)
+        custom_row.addWidget(self.manage_ids_btn)
 
-        # result / status
-        self.result_label = QLabel(""); self.result_label.setFont(self.small_font); self.result_label.setAlignment(Qt.AlignCenter)
-        actions_layout.addWidget(self.result_label)
+        self.message_input = QLineEdit()
+        self.message_input.setFont(self.small_font)
+        self.message_input.setPlaceholderText("Custom message...")
 
-        actions_card.setLayout(actions_layout)
+        # GNSS row
+        gnss_row = QHBoxLayout()
+        self.loc_label = QLabel("Location: --")
+        self.loc_label.setFont(self.small_font)
+        self.loc_btn = QPushButton("Get Location")
+        self.loc_btn.setFont(self.small_font)
+        self.loc_btn.clicked.connect(self.on_get_location)
+        gnss_row.addWidget(self.loc_label)
+        gnss_row.addWidget(self.loc_btn)
 
-        # assemble main layout
-        main_h = QHBoxLayout()
-        main_h.addWidget(ppm_card, 2)
-        main_h.addWidget(actions_card, 3)
+        self.result_label = QLabel("")
+        self.result_label.setFont(self.small_font)
+        self.result_label.setAlignment(Qt.AlignCenter)
 
-        root = QVBoxLayout()
-        root.addLayout(top)
-        root.addLayout(main_h)
-        self.setLayout(root)
+        v = QVBoxLayout()
+        v.addLayout(top_bar)
+        v.addWidget(self.ppm_label)
+        v.addWidget(self.last_update_label)
+        v.addWidget(self.status_label)
+        v.addWidget(self.signal_bar)
+        v.addLayout(btn_row)
+        v.addLayout(custom_row)
+        v.addWidget(self.message_input)
+        v.addLayout(gnss_row)
+        v.addWidget(self.result_label)
+        self.setLayout(v)
 
         # signals
         self.signals.ppm_update.connect(self.update_ppm)
         self.signals.modem_status.connect(self.update_modem_status)
         self.signals.sms_result.connect(self.on_sms_result)
-        self.signals.call_state.connect(self.on_call_state)
+        self.signals.gnss_update.connect(self.on_gnss_update)
+        self.signals.gsm_signal.connect(self.on_gsm_signal)
 
-        # worker
-        self.ze03_q = ze03_q
-        self.ze03_parser_buf = bytearray()
-        self._ze_thread = threading.Thread(target=self.ze03_worker, daemon=True)
-        self._ze_thread.start()
+        self.ze03_parser = ZE03Parser()
+        self.reader_thread = threading.Thread(target=self.ze03_worker, daemon=True)
+        self.reader_thread.start()
 
-        self.call_dialog = None
-        self._current_call_number = None
+        self.timer = QTimer()
+        self.timer.setInterval(5000)
+        self.timer.timeout.connect(self.periodic_tasks)
+        self.timer.start()
 
-        # periodic modem check
-        self.timer = QTimer(); self.timer.setInterval(5000); self.timer.timeout.connect(self._check_modem_status); self.timer.start()
-        self._op_lock = threading.Lock()
+        self._busy = False
 
-    # ---------------- ZE03 worker (robust parsing) ----------------
+    # slots
+    def _update_phone_display(self):
+        key = self.id_dropdown.currentText()
+        self.phone_display.setText(self.message_ids.get(key, ""))
+
+    def update_ppm(self, ppm):
+        self._last_ppm = ppm
+        self.last_update_label.setText(f"Last update: {datetime.now().strftime('%H:%M:%S')}")
+        self.ppm_label.setText(f"PPM: {ppm}")
+        if ppm < PPM_WARN:
+            color = "#00cc66"
+        elif ppm < PPM_DANGER:
+            color = "#ffcc33"
+        else:
+            color = "#ff3333"
+            threading.Thread(target=self._send_sos_thread, daemon=True).start()
+        self.ppm_label.setStyleSheet(f"color: {color};")
+
+    def update_modem_status(self, text):
+        self.status_label.setText(text)
+
+    def on_gnss_update(self, data):
+        if data is None:
+            self.loc_label.setText("Location: No fix")
+        else:
+            self.loc_label.setText(f"Location: {data.get('lat'):.6f}, {data.get('lon'):.6f}")
+
+    def on_gsm_signal(self, val):
+        if val is None:
+            self.status_label.setText("Modem: Online | Signal: ?")
+        else:
+            self.signal_bar.setValue(val)
+            self.status_label.setText(f"Modem: Online | Signal: {val}")
+
     def ze03_worker(self):
-        buf = bytearray()
         while True:
             try:
                 data = self.ze03_q.get()
                 if isinstance(data, bytes):
-                    # ignore error messages from reader; but print for debug
-                    if data.startswith(b"__ZE03_SERIAL_ERROR__") or data.startswith(b"__ZE03_EXCEPTION__"):
-                        try:
-                            print("SerialReader:", data.decode(errors='ignore'))
-                        except Exception:
-                            pass
-                        time.sleep(0.1)
+                    if data.startswith(b"__SERIAL_ERROR__:") or data.startswith(b"__SERIAL_EXCEPTION__:"):
+                        self.signals.modem_status.emit("Sensor serial error")
                         continue
-
-                    buf.extend(data)
-                    while len(buf) >= 9:
-                        if buf[0] != 0xFF:
-                            buf.pop(0); continue
-                        frame = buf[:9]
-                        # remove only consumed bytes when frame is used; if invalid, advance by 1
-                        checksum = (~sum(frame[1:8]) + 1) & 0xFF
-                        if frame[1] == 0x86 and checksum == frame[8]:
-                            ppm = (frame[2] << 8) | frame[3]
-                            QTimer.singleShot(0, lambda p=ppm: self.signals.ppm_update.emit(p))
-                            del buf[:9]
-                        else:
-                            # bad frame header or checksum -> advance
-                            del buf[0]
-                else:
-                    time.sleep(0.01)
+                    self.ze03_parser.feed(data)
+                    frames = self.ze03_parser.extract_frames()
+                    for ppm, raw in frames:
+                        self.signals.ppm_update.emit(ppm)
             except Exception as e:
                 print("ZE03 worker error:", e)
                 traceback.print_exc()
                 time.sleep(1)
 
-    def update_ppm(self, ppm):
-        self.ppm_label.setText(str(ppm))
-        self.last_update_label.setText(f"Last: {datetime.now().strftime('%H:%M:%S')}")
-        if ppm < PPM_WARN:
-            self.ppm_label.setStyleSheet("color:#9ae6b4;")
-        elif ppm < PPM_DANGER:
-            self.ppm_label.setStyleSheet("color:#f6e05e;")
-        else:
-            self.ppm_label.setStyleSheet("color:#feb2b2;")
-            threading.Thread(target=self._auto_sos, daemon=True).start()
+    def periodic_tasks(self):
+        threading.Thread(target=self.check_modem_and_signal, daemon=True).start()
 
-    # ---------------- Modem status ----------------
-    def _check_modem_status(self):
+    def check_modem_and_signal(self):
         try:
             alive = self.modem_ctrl.is_alive()
-        except Exception:
-            alive = False
-        self.signals.modem_status.emit("Modem: Online" if alive else "Modem: Offline")
+            if not alive:
+                self.signals.modem_status.emit("Modem: Offline")
+                return
+            rssi = self.modem_ctrl.get_signal_quality()
+            self.signals.gsm_signal.emit(rssi)
+        except Exception as e:
+            self.signals.modem_status.emit(f"Modem check error: {e}")
 
-    def update_modem_status(self, text):
-        self.result_label.setText(text)
+    def set_busy(self, busy, text=""):
+        def _set():
+            self._busy = busy
+            self.sos_button.setDisabled(busy)
+            self.send_button.setDisabled(busy)
+            self.manage_ids_btn.setDisabled(busy)
+            self.loc_btn.setDisabled(busy)
+            self.result_label.setText(text)
+        QTimer.singleShot(0, _set)
 
-    # ---------------- SMS ----------------
     def on_sos_pressed(self):
-        number = self.message_ids.get(self.id_dropdown.currentText())
-        if not number:
-            QMessageBox.warning(self, "No number", "Selected ID has no phone number.")
-            return
-        if QMessageBox.question(self, "Confirm", f"Send SOS to {number}?", QMessageBox.Yes | QMessageBox.No) != QMessageBox.Yes:
-            return
-        threading.Thread(target=lambda: self._send_sms_bg(number, SOS_SMS_TEXT), daemon=True).start()
+        def confirmed():
+            threading.Thread(target=self._send_sos_thread, daemon=True).start()
+        self._confirm_and_run("Send SOS SMS?", confirmed)
 
     def on_send_pressed(self):
-        number = self.message_ids.get(self.id_dropdown.currentText())
-        text = self.message_input.text().strip()
+        key = self.id_dropdown.currentText()
+        number = self.message_ids.get(key)
         if not number:
-            QMessageBox.warning(self, "No number", "Selected ID has no phone number.")
+            QMessageBox.warning(self, "No number", "Selected ID has no phone number assigned.")
             return
+        text = self.message_input.text().strip()
         if not text:
-            QMessageBox.warning(self, "Empty message", "Please enter message.")
+            QMessageBox.warning(self, "Empty message", "Please enter a message to send.")
             return
-        if QMessageBox.question(self, "Confirm", f"Send message to {number}?", QMessageBox.Yes | QMessageBox.No) != QMessageBox.Yes:
+        def confirmed():
+            threading.Thread(target=self._send_custom_thread, args=(number, text), daemon=True).start()
+        self._confirm_and_run("Send custom SMS?", confirmed)
+
+    def _confirm_and_run(self, prompt, fn_if_yes):
+        r = QMessageBox.question(self, "Confirm", prompt, QMessageBox.Yes | QMessageBox.No)
+        if r == QMessageBox.Yes:
+            fn_if_yes()
+
+    def _send_sos_thread(self):
+        self.set_busy(True, "Sending SOS...")
+        key = self.id_dropdown.currentText()
+        number = self.message_ids.get(key)
+        if not number:
+            self.set_busy(False, "")
+            QMessageBox.warning(self, "No Recipient", "Selected ID has no phone number assigned for SOS.")
             return
-        threading.Thread(target=lambda: self._send_sms_bg(number, text), daemon=True).start()
+        ok, raw = self.modem_ctrl.send_sms_textmode(number, SOS_SMS_TEXT, timeout=10)
+        self.signals.sms_result.emit(ok, raw)
+        self.set_busy(False, "")
 
-    def _send_sms_bg(self, number, text):
-        with self._op_lock:
-            QTimer.singleShot(0, lambda: self.signals.modem_status.emit("Sending SMS..."))
-            ok, raw = self.modem_ctrl.send_sms_textmode(number, text, timeout=12)
-            self.signals.sms_result.emit(ok, (raw or ""))
-            QTimer.singleShot(0, lambda: self.signals.modem_status.emit("Modem: Online" if ok else "Modem: Offline"))
-
-    def _auto_sos(self):
-        number = self.message_ids.get(self.id_dropdown.currentText())
-        if not number: return
-        ok, raw = self.modem_ctrl.send_sms_textmode(number, SOS_SMS_TEXT, timeout=12)
-        QTimer.singleShot(0, lambda: self.result_label.setText("Auto SOS: Sent" if ok else "Auto SOS: Failed"))
+    def _send_custom_thread(self, number, text):
+        self.set_busy(True, "Sending message...")
+        ok, raw = self.modem_ctrl.send_sms_textmode(number, text, timeout=10)
+        self.signals.sms_result.emit(ok, raw)
+        self.set_busy(False, "")
 
     def on_sms_result(self, ok, raw):
         if ok:
-            QMessageBox.information(self, "SMS Sent", "Message sent successfully.")
+            QMessageBox.information(self, "SMS Sent", f"Message sent successfully.\n\n{(raw or '')[:200]}")
             self.result_label.setText("Last SMS: Sent")
         else:
-            QMessageBox.warning(self, "SMS Failed", f"Failed to send message.\n\n{(raw or '')[:300]}")
+            QMessageBox.warning(self, "SMS Failed", f"Failed to send message.\n\n{(raw or '')[:200]}")
             self.result_label.setText("Last SMS: Failed")
 
-    # ---------------- Calls ----------------
-    def on_call_pressed(self):
-        number = self.message_ids.get(self.id_dropdown.currentText())
-        if not number:
-            QMessageBox.warning(self, "No number", "Selected ID has no phone number.")
-            return
-        if QMessageBox.question(self, "Confirm", f"Call {number}?", QMessageBox.Yes | QMessageBox.No) != QMessageBox.Yes:
-            return
-        # store current dialed number to avoid race if user changes dropdown
-        self._current_call_number = number
-        # show dialing loading
-        self.loading = LoadingDialog("Dialing", f"Dialing {number}...", parent=self)
-        self.loading.show()
-        # run blocking make_call in background thread, with state callback mapping to signals
-        def state_cb(state, raw):
-            self.signals.call_state.emit(state, raw)
-        threading.Thread(target=lambda: self.modem_ctrl.make_call_blocking(number, state_cb), daemon=True).start()
+    def on_get_location(self):
+        self.set_busy(True, "Acquiring location...")
+        threading.Thread(target=self._gnss_thread, daemon=True).start()
 
-    def on_call_state(self, state, raw):
-        st = state.upper()
-        if st == "DIALING":
-            if hasattr(self, "loading") and self.loading:
-                self.loading.set_message("Ringing...")
-            self.result_label.setText("Call: Dialing...")
-        elif st == "ACTIVE":
-            if hasattr(self, "loading") and self.loading:
-                try: self.loading.accept()
-                except Exception: pass
-            number = getattr(self, "_current_call_number", "") or self.message_ids.get(self.id_dropdown.currentText(), "")
-            if self.call_dialog is None:
-                self.call_dialog = CallDialog(number, hangup_cb=self._call_hangup, close_cb=self._confirm_close, parent=self)
-            self.call_dialog.show(); self.call_dialog.start_timer()
-            self.result_label.setText("Call: Connected")
-            self.sos_button.setDisabled(True); self.send_button.setDisabled(True); self.call_button.setDisabled(True)
-        elif st == "FAILED":
-            if hasattr(self, "loading") and self.loading:
-                self.loading.set_done(False, raw or "Call failed/declined")
-                QTimer.singleShot(800, lambda: getattr(self, "loading", None).accept() if getattr(self, "loading", None) else None)
-            else:
-                QMessageBox.warning(self, "Call Failed", f"Call failed/declined: {raw}")
-            self.result_label.setText("Call: Failed/Declined")
-            self.sos_button.setDisabled(False); self.send_button.setDisabled(False); self.call_button.setDisabled(False)
-            self._current_call_number = None
-        elif st == "HANGUP":
-            self._destroy_call_dialog()
-            self.result_label.setText("Call: Ended")
-            self.sos_button.setDisabled(False); self.send_button.setDisabled(False); self.call_button.setDisabled(False)
-            self._current_call_number = None
-        elif st == "IDLE":
-            self._destroy_call_dialog()
-            self.sos_button.setDisabled(False); self.send_button.setDisabled(False); self.call_button.setDisabled(False)
-            self._current_call_number = None
+    def _gnss_thread(self):
+        self.modem_ctrl.start_gnss()
+        time.sleep(1)
+        loc = self.modem_ctrl.get_gnss_location(timeout=6)
+        self.signals.gnss_update.emit(loc)
+        self.set_busy(False, "")
 
-    def _call_hangup(self):
-        try:
-            threading.Thread(target=lambda: self.modem_ctrl.hangup(), daemon=True).start()
-        except Exception:
-            pass
-        QTimer.singleShot(600, self._destroy_call_dialog)
+    def manage_ids_dialog(self):
+        d = QDialog(self)
+        d.setWindowTitle("Manage Message IDs")
+        layout = QFormLayout(d)
 
-    def _destroy_call_dialog(self):
-        if self.call_dialog:
-            try:
-                self.call_dialog.stop_timer()
-                self.call_dialog.close()
-            except Exception:
-                pass
-            self.call_dialog = None
-            self.sos_button.setDisabled(False); self.send_button.setDisabled(False); self.call_button.setDisabled(False)
+        editors = {}
+        keys = sorted(self.message_ids.keys())
+        new_id_input = QLineEdit()
+        new_phone_input = QLineEdit()
+        new_id_input.setPlaceholderText("New ID")
+        new_phone_input.setPlaceholderText("Phone number (+91...)")
+        layout.addRow(QLabel("New ID:"), new_id_input)
+        layout.addRow(QLabel("Phone:"), new_phone_input)
 
-    # ---------------- misc ----------------
-    def _update_phone_display(self): self.phone_display.setText(self.message_ids.get(self.id_dropdown.currentText(), ""))
-    def _show_keyboard(self, ev):
-        self.keyboard.move(self.x() + 20, self.y() + self.height() - self.keyboard.height() - 20)
-        self.keyboard.show()
-        return QLineEdit.mousePressEvent(self.message_input, ev)
-    def _confirm_close(self):
-        r = QMessageBox.question(self, "Exit", "Exit application?", QMessageBox.Yes | QMessageBox.No)
-        if r == QMessageBox.Yes:
-            try: QApplication.quit()
-            except Exception: os._exit(0)
+        for k in keys:
+            le = QLineEdit(self.message_ids.get(k, ""))
+            layout.addRow(QLabel(k + ":"), le)
+            editors[k] = le
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        layout.addWidget(buttons)
+        buttons.accepted.connect(d.accept)
+        buttons.rejected.connect(d.reject)
+
+        if d.exec_() == QDialog.Accepted:
+            nid = new_id_input.text().strip()
+            nphone = new_phone_input.text().strip()
+            if nid and nphone:
+                self.message_ids[nid] = nphone
+            for k, le in editors.items():
+                v = le.text().strip()
+                if v:
+                    self.message_ids[k] = v
+                else:
+                    self.message_ids.pop(k, None)
+            self.id_dropdown.clear()
+            self.id_dropdown.addItems(sorted(self.message_ids.keys()))
+            self._update_phone_display()
 
 # -----------------------------
 # Main
 # -----------------------------
 def main():
-    ze03_q = queue.Queue()
-    reader = SerialReaderThread(ZE03_SERIAL, ZE03_BAUD, ze03_q); reader.start()
-    modem = ModemController(MODEM_SERIAL, MODEM_BAUD)
+    ze03_queue = queue.Queue()
+    ze03_reader = SerialReaderThread(ZE03_SERIAL, ZE03_BAUD, ze03_queue, name="ZE03Reader")
+    ze03_reader.start()
+
+    modem_port = auto_detect_modem(baud=MODEM_BAUD, timeout=2)
+    if modem_port is None:
+        print("ERROR: No modem found on /dev/ttyUSB*")
+        sys.exit(1)
+
+    modem = ModemController(modem_port, MODEM_BAUD, timeout=2)
 
     app = QApplication(sys.argv)
-    font = QFont(); font.setPointSize(10); app.setFont(font)
+    font = QFont()
+    font.setPointSize(10)
+    app.setFont(font)
 
-    window = MinerMonitorApp(ze03_q, modem, message_ids=DEFAULT_MESSAGE_IDS.copy())
+    window = MinerMonitorApp(ze03_queue, modem, message_ids=DEFAULT_MESSAGE_IDS.copy())
     window.showFullScreen()
     try:
         sys.exit(app.exec_())
     finally:
-        try: reader.stop()
-        except Exception: pass
+        ze03_reader.stop()
 
 if __name__ == "__main__":
     main()
