@@ -880,10 +880,9 @@ class PollutionControlApp(QWidget):
         self.contact_row.addWidget(self.contact_dropdown)
         self.contact_row.addWidget(self.contact_label)
         
-        # Contact row widget (visible by default)
-        self.contact_row_widget = QWidget()
-        self.contact_row_widget.setLayout(self.contact_row)
-        self.contact_row_widget.setVisible(True)
+        # Contact row is now directly added to main layout
+        print(f"DEBUG: Contact dropdown has {self.contact_dropdown.count()} items")
+        print(f"DEBUG: Available contacts: {list(self.contacts.keys())}")
 
         self.result_label = QLabel("")
         self.result_label.setFont(self.small_font)
@@ -909,7 +908,7 @@ class PollutionControlApp(QWidget):
         v.addLayout(location_row)
         v.addWidget(self.busy_bar)
         v.addLayout(btn_row)
-        v.addWidget(self.contact_row_widget)
+        v.addLayout(self.contact_row)
         v.addWidget(self.result_label)
         self.setLayout(v)
 
