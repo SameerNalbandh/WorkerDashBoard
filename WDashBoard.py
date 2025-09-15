@@ -201,24 +201,24 @@ class ModemController:
         except Exception:
             return None
 
-    def send_sms_textmode(self, number, text, timeout=15):
+    def send_sms_textmode(self, number, text, timeout=20):
         with self.lock:
             ser = self._open()
             try:
                 # Set text mode
                 ser.write(b"AT+CMGF=1\r")
-                time.sleep(0.5)
-                response = ser.read(512)
+                time.sleep(1)
+                response = ser.read(1024)
                 if b"OK" not in response:
-                    return False, "Failed to set text mode"
+                    return False, f"Failed to set text mode: {response.decode(errors='ignore')}"
 
                 # Send SMS command
                 cmd = f'AT+CMGS="{number}"\r'.encode()
                 ser.write(cmd)
-                time.sleep(0.5)
+                time.sleep(1)
 
                 # Wait for '>' prompt
-                deadline = time.time() + 10
+                deadline = time.time() + 15
                 buf = bytearray()
                 while time.time() < deadline:
                     chunk = ser.read(256)
@@ -226,15 +226,14 @@ class ModemController:
                         buf.extend(chunk)
                         if b">" in buf:
                             break
-                    else:
-                        time.sleep(0.1)
+                    time.sleep(0.2)
 
                 if b">" not in buf:
-                    return False, "No prompt received"
+                    return False, f"No prompt received: {buf.decode(errors='ignore')}"
 
                 # Send message with Ctrl+Z
                 ser.write(text.encode() + b"\x1A")
-                time.sleep(1)
+                time.sleep(2)
 
                 # Wait for result
                 resp = bytearray()
@@ -245,15 +244,14 @@ class ModemController:
                         resp.extend(chunk)
                         if b"+CMGS" in resp or b"OK" in resp or b"ERROR" in resp or b"+CMS ERROR" in resp:
                             break
-                    else:
-                        time.sleep(0.1)
+                    time.sleep(0.2)
 
                 s = resp.decode(errors="ignore")
                 if "ERROR" in s or "+CMS ERROR" in s:
                     return False, s
                 if "+CMGS" in s or "OK" in s:
                     return True, s
-                return False, "No response received"
+                return False, f"No response received: {s}"
             except Exception as e:
                 return False, str(e)
             finally:
@@ -268,15 +266,10 @@ class ModemController:
         with self.lock:
             ser = self._open()
             try:
-                # Enable call progress notifications
-                ser.write(b"AT+QINDCFG=\"call\",1\r")
-                time.sleep(0.2)
-                ser.read(256)
-                
                 # Make the call
                 cmd = f'ATD{number};\r'.encode()
                 ser.write(cmd)
-                time.sleep(1)
+                time.sleep(2)
                 
                 # Wait for call progress
                 deadline = time.time() + timeout
@@ -308,9 +301,9 @@ class ModemController:
                             error_msg = "No answer"
                             break
                         elif "RING" in response:
-                            # Call is ringing
+                            # Call is ringing - continue waiting
                             continue
-                    time.sleep(0.1)
+                    time.sleep(0.2)
                 
                 if call_failed:
                     return False, error_msg
@@ -405,6 +398,9 @@ class MinerMonitorApp(QWidget):
         self._last_frame_time = time.time()
 
         self.message_ids = message_ids or DEFAULT_MESSAGE_IDS.copy()
+        
+        # Test modem connection at startup
+        self.test_modem_connection()
 
         self.title_font = QFont("Sans Serif", 12, QFont.Bold)
         self.big_font = QFont("Sans Serif", 24, QFont.Bold)
@@ -546,6 +542,20 @@ class MinerMonitorApp(QWidget):
         self._call_timer.timeout.connect(self.update_call_timer_display)
 
     # slots
+    def test_modem_connection(self):
+        """Test modem connection at startup"""
+        try:
+            alive = self.modem_ctrl.is_alive()
+            if alive:
+                self.signals.modem_status.emit("Modem: Online")
+                print("Modem connection test: OK")
+            else:
+                self.signals.modem_status.emit("Modem: Offline")
+                print("Modem connection test: FAILED")
+        except Exception as e:
+            self.signals.modem_status.emit("Modem: Error")
+            print(f"Modem connection test error: {e}")
+
     def _update_phone_display(self):
         key = self.id_dropdown.currentText()
         self.phone_display.setText(self.message_ids.get(key, ""))
@@ -598,17 +608,16 @@ class MinerMonitorApp(QWidget):
 
     def monitor_call_status(self):
         """Monitor call status periodically"""
-        if not self._busy:  # Only check when not busy with other operations
-            try:
-                status = self.modem_ctrl.get_call_status()
-                if status == "Call in progress" and not self._call_in_progress:
-                    # Call just connected
-                    self.signals.call_status.emit("Call in progress")
-                elif status == "Ready" and self._call_in_progress:
-                    # Call ended
-                    self.signals.call_status.emit("Call ended")
-            except Exception:
-                pass
+        try:
+            status = self.modem_ctrl.get_call_status()
+            if status == "Call in progress" and not self._call_in_progress:
+                # Call just connected
+                self.signals.call_status.emit("Call in progress")
+            elif status == "Ready" and self._call_in_progress:
+                # Call ended
+                self.signals.call_status.emit("Call ended")
+        except Exception:
+            pass
 
     def ze03_worker(self):
         while True:
@@ -646,16 +655,15 @@ class MinerMonitorApp(QWidget):
                 self.signals.modem_status.emit("Modem: Online | Signal: Unknown")
                 
         except Exception as e:
-            self.signals.modem_status.emit(f"Modem check error: {e}")
+            print(f"Modem check error: {e}")
+            self.signals.modem_status.emit("Modem: Error")
 
     def set_busy(self, busy, text=""):
-        def _set():
-            self._busy = busy
-            self.sos_button.setDisabled(busy)
-            self.send_button.setDisabled(busy)
-            self.call_button.setDisabled(busy)
-            self.result_label.setText(text)
-        QTimer.singleShot(0, _set)
+        self._busy = busy
+        self.sos_button.setDisabled(busy)
+        self.send_button.setDisabled(busy)
+        self.call_button.setDisabled(busy)
+        self.result_label.setText(text)
 
     def on_sos_pressed(self):
         def confirmed():
@@ -721,7 +729,13 @@ class MinerMonitorApp(QWidget):
         success, message = self.modem_ctrl.make_call(number, timeout=30)
         
         if success:
-            self.signals.call_status.emit("Call connected")
+            # Wait a moment to see if call actually connects
+            time.sleep(3)
+            call_status = self.modem_ctrl.get_call_status()
+            if call_status == "Call in progress":
+                self.signals.call_status.emit("Call in progress")
+            else:
+                self.signals.call_status.emit("Call connected")
             self.set_busy(False, "")
         else:
             # Handle different failure cases
