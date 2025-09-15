@@ -153,6 +153,7 @@ class ModemController:
         self.baud = baud
         self.timeout = timeout
         self.lock = threading.Lock()
+        self._initialized = False
 
     def _open(self):
         return serial.Serial(self.dev, self.baud, timeout=self.timeout)
@@ -194,13 +195,65 @@ class ModemController:
         except Exception:
             return None
 
+    def wait_for_registration(self, max_wait_seconds=30):
+        deadline = time.time() + max_wait_seconds
+        while time.time() < deadline:
+            try:
+                # Try LTE, PS and CS registration queries
+                for cmd in ("AT+CEREG?", "AT+CGREG?", "AT+CREG?"):
+                    resp = self.send_at(cmd, wait_for=b"OK", timeout=2)
+                    s = resp.decode(errors="ignore")
+                    for line in s.splitlines():
+                        if ":" in line and ("CEREG" in line or "CGREG" in line or "CREG" in line):
+                            try:
+                                status = int(line.split(":")[1].strip().split(",")[1])
+                                if status in (1, 5):
+                                    return True
+                            except Exception:
+                                pass
+            except Exception:
+                pass
+            time.sleep(1.0)
+        return False
+
+    def initialize_for_sms(self):
+        try:
+            steps = [
+                ("AT", 2),
+                ("ATE0", 2),
+                ("AT+CMEE=2", 2),
+                ("AT+CFUN=1", 5),
+                ("AT+CPIN?", 2),
+            ]
+            for cmd, to in steps:
+                _ = self.send_at(cmd, wait_for=b"OK", timeout=to)
+
+            if not self.wait_for_registration(max_wait_seconds=45):
+                return False, "Not registered to network"
+
+            _ = self.send_at("AT+CSCS=\"GSM\"", wait_for=b"OK", timeout=2)
+            _ = self.send_at("AT+CMGF=1", wait_for=b"OK", timeout=2)
+            _ = self.send_at("AT+CSMS=1", wait_for=b"OK", timeout=2)
+            # Optional: ensure SMS storage
+            _ = self.send_at("AT+CPMS=\"ME\",\"ME\",\"ME\"", wait_for=b"OK", timeout=2)
+            self._initialized = True
+            return True, "Ready"
+        except Exception as e:
+            return False, str(e)
+
     def send_sms_textmode(self, number, text, timeout=10):
         with self.lock:
             ser = self._open()
             try:
+                ser.write(b"ATE0\r")
+                time.sleep(0.1)
+                _ = ser.read(256)
                 ser.write(b"AT+CMGF=1\r")
                 time.sleep(0.2)
                 _ = ser.read(512)
+                ser.write(b"AT+CSCS=\"GSM\"\r")
+                time.sleep(0.2)
+                _ = ser.read(256)
 
                 cmd = f'AT+CMGS="{number}"\r'.encode()
                 ser.write(cmd)
@@ -344,7 +397,7 @@ class MinerMonitorApp(QWidget):
         self.signals = AppSignals()
         self.setWindowTitle(APP_TITLE)
         self.resize(WINDOW_WIDTH, WINDOW_HEIGHT)
-        self.setStyleSheet("background-color: #0f1420; color: #e6eef8;")
+        self.setStyleSheet("background-color: #101318; color: #e8f1ff;")
         self._last_ppm = None
         self._last_frame_time = time.time()
         self._above_threshold = False
@@ -384,27 +437,27 @@ class MinerMonitorApp(QWidget):
         self.signal_bar = QProgressBar()
         self.signal_bar.setRange(0, 31)
         self.signal_bar.setFormat("Signal: %v")
-        self.signal_bar.setStyleSheet("QProgressBar{border:1px solid #334; border-radius:6px; background:#0b1020;} QProgressBar::chunk{background-color:#2ecc71;}")
+        self.signal_bar.setStyleSheet("QProgressBar{border:1px solid #2a3344; border-radius:6px; background:#0c111d;} QProgressBar::chunk{background-color:#29d19c;}")
 
         # Busy/loading bar (indeterminate)
         self.busy_bar = QProgressBar()
         self.busy_bar.setRange(0, 0)
         self.busy_bar.setVisible(False)
         self.busy_bar.setFixedHeight(10)
-        self.busy_bar.setStyleSheet("QProgressBar{border:1px solid #334; border-radius:6px; background:#0b1020;} QProgressBar::chunk{background-color:#f1c40f;}")
+        self.busy_bar.setStyleSheet("QProgressBar{border:1px solid #2a3344; border-radius:6px; background:#0c111d;} QProgressBar::chunk{background-color:#f5a524;}")
 
         # Buttons
         btn_row = QHBoxLayout()
         self.sos_button = QPushButton("SOS")
         self.sos_button.setFont(self.med_font)
         self.sos_button.setMinimumHeight(70)
-        self.sos_button.setStyleSheet("background-color: #d35454; color: white; border-radius: 10px;")
+        self.sos_button.setStyleSheet("background-color: #e0565b; color: #fff; border-radius: 10px;")
         self.sos_button.clicked.connect(self.on_sos_pressed)
 
         self.send_button = QPushButton("SMS")
         self.send_button.setFont(self.med_font)
         self.send_button.setMinimumHeight(70)
-        self.send_button.setStyleSheet("background-color: #2e86de; color: white; border-radius: 10px;")
+        self.send_button.setStyleSheet("background-color: #3a7bd5; color: #fff; border-radius: 10px;")
         self.send_button.clicked.connect(self.on_send_pressed)
 
         btn_row.addWidget(self.sos_button)
@@ -437,6 +490,9 @@ class MinerMonitorApp(QWidget):
         self.reader_thread = threading.Thread(target=self.ze03_worker, daemon=True)
         self.reader_thread.start()
 
+        # Initialize modem in background
+        threading.Thread(target=self.modem_init_worker, daemon=True).start()
+
         self.timer = QTimer()
         self.timer.setInterval(5000)
         self.timer.timeout.connect(self.periodic_tasks)
@@ -445,6 +501,15 @@ class MinerMonitorApp(QWidget):
         self._busy = False
 
     # slots
+    def modem_init_worker(self):
+        self.signals.modem_status.emit("Modem: Initializing...")
+        ok, msg = self.modem_ctrl.initialize_for_sms()
+        if ok:
+            rssi = self.modem_ctrl.get_signal_quality()
+            self.signals.gsm_signal.emit(rssi)
+            self.signals.modem_status.emit("Modem: Online")
+        else:
+            self.signals.modem_status.emit(f"Modem: Init failed - {msg}")
     # Simple on-screen keyboard dialog for SMS text
     def open_sms_keyboard(self):
         dialog = QDialog(self)
@@ -580,13 +645,21 @@ class MinerMonitorApp(QWidget):
     def _send_sos_thread(self):
         self.set_busy(True, "Sending SOS...")
         number = self.alert_phone
-        ok, raw = self.modem_ctrl.send_sms_textmode(number, SOS_SMS_TEXT, timeout=10)
+        if not self.modem_ctrl.is_alive():
+            self.signals.sms_result.emit(False, "Modem not responding to AT")
+            self.set_busy(False, "")
+            return
+        ok, raw = self.modem_ctrl.send_sms_textmode(number, SOS_SMS_TEXT, timeout=20)
         self.signals.sms_result.emit(ok, raw)
         self.set_busy(False, "")
 
     def _send_custom_thread(self, number, text):
         self.set_busy(True, "Sending message...")
-        ok, raw = self.modem_ctrl.send_sms_textmode(number, text, timeout=10)
+        if not self.modem_ctrl.is_alive():
+            self.signals.sms_result.emit(False, "Modem not responding to AT")
+            self.set_busy(False, "")
+            return
+        ok, raw = self.modem_ctrl.send_sms_textmode(number, text, timeout=20)
         self.signals.sms_result.emit(ok, raw)
         self.set_busy(False, "")
 
