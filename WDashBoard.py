@@ -4,11 +4,10 @@ WorkerDashboard.py (Miner Safety Monitor)
 
 Touch-screen friendly dashboard (4.3") for:
 - Winsen ZE03-CO (UART)
-- Quectel EC200U (USB) for SMS, GNSS
+- Quectel EC200U (USB) for SMS
 Features:
 - SOS (predefined SMS)
 - Custom message (dropdown IDs -> assignable phone numbers)
-- Live GNSS location
 - Touch-friendly UI, no emojis, no uploads
 - Robust SMS logic (10s wait). UI loading state & success/fail notifications.
 - GUI updates via Qt signals to avoid painter conflicts.
@@ -49,19 +48,19 @@ PPM_DANGER = 100
 
 MODEM_PORT = "/dev/ttyAMA5"
 
-# Global stylesheet for consistent dark theme and fewer white UI bars
+# Global stylesheet: improved contrast and legibility
 APP_STYLESHEET = """
-QWidget { background-color: #0f1115; color: #e5e7eb; }
-QLabel { color: #e5e7eb; }
-QPushButton { background-color: #2563eb; color: #ffffff; border: none; border-radius: 10px; padding: 10px 12px; }
-QPushButton#sosButton { background-color: #dc2626; }
-QPushButton#sosButton:pressed { background-color: #b91c1c; }
-QPushButton:pressed { background-color: #1d4ed8; }
-QPushButton:disabled { background-color: #374151; color: #9ca3af; }
-QLineEdit, QComboBox { background-color: #111827; color: #e5e7eb; border: 1px solid #374151; border-radius: 8px; padding: 6px 8px; }
-QProgressBar { background-color: #111827; border: 1px solid #374151; border-radius: 6px; text-align: center; color: #e5e7eb; }
-QProgressBar::chunk { background-color: #10b981; border-radius: 6px; }
-QMessageBox { background-color: #0f1115; }
+QWidget { background-color: #0b0f17; color: #e6edf3; }
+QLabel { color: #e6edf3; }
+QPushButton { background-color: #1f6feb; color: #ffffff; border: none; border-radius: 10px; padding: 10px 12px; }
+QPushButton#sosButton { background-color: #d1242f; }
+QPushButton#sosButton:pressed { background-color: #a40e26; }
+QPushButton:pressed { background-color: #1158c7; }
+QPushButton:disabled { background-color: #30363d; color: #8b949e; }
+QLineEdit, QComboBox { background-color: #0d1117; color: #e6edf3; border: 1px solid #30363d; border-radius: 8px; padding: 6px 8px; }
+QProgressBar { background-color: #0d1117; border: 1px solid #30363d; border-radius: 6px; text-align: center; color: #e6edf3; }
+QProgressBar::chunk { background-color: #238636; border-radius: 6px; }
+QMessageBox { background-color: #0b0f17; }
 """
 
 APP_TITLE = "Miner Safety Monitor"
@@ -267,65 +266,7 @@ class ModemController:
                 except Exception:
                     pass
 
-    def start_gnss(self):
-        try_cmds = ["AT+QGNSS=1", "AT+QGPS=1", "AT+CGNSPWR=1"]
-        results = {}
-        for cmd in try_cmds:
-            try:
-                raw = self.send_at(cmd, wait_for=b"OK", timeout=1)
-                results[cmd] = raw.decode(errors="ignore")
-            except Exception as e:
-                results[cmd] = f"ERR:{e}"
-        return results
-
-    def get_gnss_location(self, timeout=6):
-        with self.lock:
-            ser = self._open()
-            try:
-                ser.write(b"AT+QGNSSLOC?\r")
-                time.sleep(1)
-                out = ser.read_all().decode(errors="ignore")
-                for line in out.splitlines():
-                    if line.startswith("+QGNSSLOC:"):
-                        parts = line.split(":")[1].strip().split(",")
-                        try:
-                            lat = float(parts[1])
-                            lon = float(parts[2])
-                            return {"lat": lat, "lon": lon, "raw": out}
-                        except Exception:
-                            pass
-
-                ser.write(b"AT+QGPSLOC?\r")
-                time.sleep(1)
-                out = ser.read_all().decode(errors="ignore")
-                for line in out.splitlines():
-                    if line.startswith("+QGPSLOC:"):
-                        parts = line.split(":")[1].strip().split(",")
-                        try:
-                            lat = float(parts[1])
-                            lon = float(parts[2])
-                            return {"lat": lat, "lon": lon, "raw": out}
-                        except Exception:
-                            pass
-
-                ser.write(b"AT+CGNSINF\r")
-                time.sleep(1)
-                out = ser.read_all().decode(errors="ignore")
-                for line in out.splitlines():
-                    if line.startswith("+CGNSINF:"):
-                        fields = line.split(":")[1].strip().split(",")
-                        if fields[1] == "1":
-                            lat = float(fields[3])
-                            lon = float(fields[4])
-                            return {"lat": lat, "lon": lon, "raw": out}
-                return None
-            except Exception:
-                return None
-            finally:
-                try:
-                    ser.close()
-                except Exception:
-                    pass
+    # GNSS methods removed as live location feature is not used
 
 # -----------------------------
 # Auto-detect modem
@@ -353,7 +294,6 @@ class AppSignals(QObject):
     ppm_update = pyqtSignal(int)
     modem_status = pyqtSignal(str)
     sms_result = pyqtSignal(bool, str)
-    gnss_update = pyqtSignal(object)
     gsm_signal = pyqtSignal(object)
 
 # -----------------------------
@@ -445,18 +385,6 @@ class MinerMonitorApp(QWidget):
         self.message_input.setFont(self.small_font)
         self.message_input.setPlaceholderText("Custom message...")
 
-        # GNSS row
-        gnss_row = QHBoxLayout()
-        gnss_row.setContentsMargins(0, 0, 0, 0)
-        gnss_row.setSpacing(8)
-        self.loc_label = QLabel("Location: --")
-        self.loc_label.setFont(self.small_font)
-        self.loc_btn = QPushButton("Get Location")
-        self.loc_btn.setFont(self.small_font)
-        self.loc_btn.clicked.connect(self.on_get_location)
-        gnss_row.addWidget(self.loc_label)
-        gnss_row.addWidget(self.loc_btn)
-
         self.result_label = QLabel("")
         self.result_label.setFont(self.small_font)
         self.result_label.setAlignment(Qt.AlignCenter)
@@ -472,7 +400,6 @@ class MinerMonitorApp(QWidget):
         v.addLayout(btn_row)
         v.addLayout(custom_row)
         v.addWidget(self.message_input)
-        v.addLayout(gnss_row)
         v.addWidget(self.result_label)
         self.setLayout(v)
 
@@ -483,7 +410,6 @@ class MinerMonitorApp(QWidget):
         self.signals.ppm_update.connect(self.update_ppm)
         self.signals.modem_status.connect(self.update_modem_status)
         self.signals.sms_result.connect(self.on_sms_result)
-        self.signals.gnss_update.connect(self.on_gnss_update)
         self.signals.gsm_signal.connect(self.on_gsm_signal)
 
         self.ze03_parser = ZE03Parser()
@@ -491,14 +417,18 @@ class MinerMonitorApp(QWidget):
         self.reader_thread.start()
 
         self.timer = QTimer()
-        self.timer.setInterval(5000)
+        self.timer.setInterval(4000)
         self.timer.timeout.connect(self.periodic_tasks)
         self.timer.start()
 
         self._busy = False
 
-        # Start GNSS once for live updates
-        threading.Thread(target=self._ensure_gnss_started, daemon=True).start()
+        # PPM staleness watchdog
+        self._last_frame_time = 0
+        self.stale_timer = QTimer()
+        self.stale_timer.setInterval(1000)
+        self.stale_timer.timeout.connect(self._check_ppm_staleness)
+        self.stale_timer.start()
 
     # slots
     def _update_phone_display(self):
@@ -507,6 +437,7 @@ class MinerMonitorApp(QWidget):
 
     def update_ppm(self, ppm):
         self._last_ppm = ppm
+        self._last_frame_time = time.time()
         self.last_update_label.setText(f"Last update: {datetime.now().strftime('%H:%M:%S')}")
         self.ppm_label.setText(f"PPM: {ppm}")
         if ppm < PPM_WARN:
@@ -526,15 +457,9 @@ class MinerMonitorApp(QWidget):
     def update_modem_status(self, text):
         self.status_label.setText(text)
 
-    def on_gnss_update(self, data):
-        if data is None:
-            self.loc_label.setText("Location: No fix")
-        else:
-            self.loc_label.setText(f"Location: {data.get('lat'):.6f}, {data.get('lon'):.6f}")
-
     def on_gsm_signal(self, val):
         if val is None:
-            self.status_label.setText("Modem: Online | Signal: ?")
+            self.status_label.setText("Modem: Online | Signal: --")
         else:
             self.signal_bar.setValue(val)
             self.status_label.setText(f"Modem: Online | Signal: {val}")
@@ -562,20 +487,12 @@ class MinerMonitorApp(QWidget):
 
     def periodic_tasks(self):
         threading.Thread(target=self.check_modem_and_signal, daemon=True).start()
-        threading.Thread(target=self._poll_gnss_once, daemon=True).start()
-
-    def _poll_gnss_once(self):
-        try:
-            loc = self.modem_ctrl.get_gnss_location(timeout=6)
-        except Exception:
-            loc = None
-        self.signals.gnss_update.emit(loc)
 
     def check_modem_and_signal(self):
         try:
             alive = self.modem_ctrl.is_alive()
             if not alive:
-                self.signals.modem_status.emit("Modem: Offline")
+                self.signals.modem_status.emit("Modem: Offline | Signal: --")
                 return
             rssi = self.modem_ctrl.get_signal_quality()
             self.signals.gsm_signal.emit(rssi)
@@ -610,8 +527,7 @@ class MinerMonitorApp(QWidget):
             self._busy = True
             self.sos_button.setDisabled(True)
             self.send_button.setDisabled(True)
-            self.loc_btn.setDisabled(True)
-            self.overlay_label.setStyleSheet("color: #e5e7eb;")
+            self.overlay_label.setStyleSheet("color: #e6edf3;")
             self.overlay_label.setText(text or "Please wait...")
             self.overlay_progress.setRange(0, 0)
             self.overlay.setGeometry(self.rect())
@@ -624,7 +540,6 @@ class MinerMonitorApp(QWidget):
             self.overlay.hide()
             self.sos_button.setDisabled(False)
             self.send_button.setDisabled(False)
-            self.loc_btn.setDisabled(False)
         QTimer.singleShot(0, _hide)
 
     def show_result_overlay(self, text, ok):
@@ -692,16 +607,11 @@ class MinerMonitorApp(QWidget):
             self.result_label.setText("Last SMS: Failed")
             self.show_result_overlay("Failed to send message", False)
 
-    def on_get_location(self):
-        self.set_busy(True, "Acquiring location...")
-        threading.Thread(target=self._gnss_thread, daemon=True).start()
-
-    def _gnss_thread(self):
-        self.modem_ctrl.start_gnss()
-        time.sleep(1)
-        loc = self.modem_ctrl.get_gnss_location(timeout=6)
-        self.signals.gnss_update.emit(loc)
-        self.set_busy(False, "")
+    def _check_ppm_staleness(self):
+        now = time.time()
+        if self._last_frame_time == 0 or (now - self._last_frame_time) > 3.0:
+            self.ppm_label.setText("PPM: --")
+            self.ppm_label.setStyleSheet("color: #8b949e;")
 
     def _ensure_gnss_started(self):
         try:
