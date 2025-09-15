@@ -191,7 +191,7 @@ class ModemController:
                     ser.write(b"AT\r")
                     time.sleep(0.5)
                     resp = ser.read(256)
-            return b"OK" in resp
+                    return b"OK" in resp
                 finally:
                     ser.close()
         except Exception:
