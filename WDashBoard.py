@@ -32,7 +32,7 @@ from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QObject
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QLabel, QPushButton, QVBoxLayout, QHBoxLayout,
     QMessageBox, QProgressBar, QLineEdit, QDialog, QFormLayout,
-    QDialogButtonBox, QSizePolicy, QComboBox
+    QDialogButtonBox, QSizePolicy, QComboBox, QFrame, QSpacerItem
 )
 from PyQt5.QtGui import QFont
 
@@ -388,6 +388,73 @@ def auto_detect_modem(baud=MODEM_BAUD, timeout=2):
     return None
 
 # -----------------------------
+# Loading Dialog
+# -----------------------------
+class LoadingDialog(QDialog):
+    def __init__(self, parent, message="Processing..."):
+        super().__init__(parent)
+        self.setWindowTitle("Processing")
+        self.setModal(True)
+        self.setFixedSize(300, 150)
+        self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
+        
+        # Worker safety color scheme
+        self.setStyleSheet("""
+            QDialog {
+                background-color: #1a1a1a;
+                border: 2px solid #ff6b35;
+                border-radius: 10px;
+            }
+        """)
+        
+        layout = QVBoxLayout()
+        layout.setSpacing(20)
+        
+        # Loading spinner (animated progress bar)
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 0)  # Indeterminate
+        self.progress_bar.setFixedHeight(20)
+        self.progress_bar.setStyleSheet("""
+            QProgressBar {
+                border: 2px solid #ff6b35;
+                border-radius: 10px;
+                background-color: #2a2a2a;
+            }
+            QProgressBar::chunk {
+                background-color: #ff6b35;
+                border-radius: 8px;
+            }
+        """)
+        
+        # Message label
+        self.message_label = QLabel(message)
+        self.message_label.setAlignment(Qt.AlignCenter)
+        self.message_label.setStyleSheet("""
+            QLabel {
+                color: #ffffff;
+                font-size: 14px;
+                font-weight: bold;
+            }
+        """)
+        
+        layout.addWidget(self.progress_bar)
+        layout.addWidget(self.message_label)
+        self.setLayout(layout)
+        
+        # Center the dialog
+        self.center_dialog()
+    
+    def center_dialog(self):
+        if self.parent():
+            parent_geometry = self.parent().geometry()
+            x = parent_geometry.x() + (parent_geometry.width() - self.width()) // 2
+            y = parent_geometry.y() + (parent_geometry.height() - self.height()) // 2
+            self.move(x, y)
+    
+    def update_message(self, message):
+        self.message_label.setText(message)
+
+# -----------------------------
 # GUI Signals
 # -----------------------------
 class AppSignals(QObject):
@@ -407,10 +474,22 @@ class MinerMonitorApp(QWidget):
         self.signals = AppSignals()
         self.setWindowTitle(APP_TITLE)
         self.resize(WINDOW_WIDTH, WINDOW_HEIGHT)
-        self.setStyleSheet("background-color: #101318; color: #e8f1ff;")
+        
+        # Worker safety color scheme - dark background with safety orange/yellow accents
+        self.setStyleSheet("""
+            QWidget {
+                background-color: #1a1a1a;
+                color: #ffffff;
+            }
+            QLabel {
+                color: #ffffff;
+            }
+        """)
+        
         self._last_ppm = None
         self._last_frame_time = time.time()
         self._above_threshold = False
+        self.loading_dialog = None
 
         # Contacts and selected destination
         self.contacts = CONTACTS.copy()
@@ -421,75 +500,237 @@ class MinerMonitorApp(QWidget):
         self.med_font = QFont("Sans Serif", 13)
         self.small_font = QFont("Sans Serif", 11)
 
-        # Top bar
+        # Top bar with safety styling
         top_bar = QHBoxLayout()
-        self.title_label = QLabel("MINER SAFETY")
+        top_bar.setSpacing(10)
+        
+        self.title_label = QLabel("⚠️ MINER SAFETY MONITOR ⚠️")
         self.title_label.setFont(self.title_font)
         self.title_label.setAlignment(Qt.AlignCenter)
-        close_btn = QPushButton("Close")
+        self.title_label.setStyleSheet("""
+            QLabel {
+                color: #ff6b35;
+                font-weight: bold;
+                padding: 10px;
+                background-color: #2a2a2a;
+                border: 2px solid #ff6b35;
+                border-radius: 8px;
+            }
+        """)
+        
+        close_btn = QPushButton("✕")
         close_btn.setFont(self.med_font)
-        close_btn.setFixedHeight(34)
+        close_btn.setFixedSize(40, 40)
+        close_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #ff4444;
+                color: white;
+                border: 2px solid #cc0000;
+                border-radius: 20px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #cc0000;
+            }
+        """)
         close_btn.clicked.connect(self.close)
+        
         top_bar.addWidget(self.title_label, 1)
         top_bar.addWidget(close_btn)
 
+        # PPM Display with safety styling
         self.ppm_label = QLabel("PPM: ---")
         self.ppm_label.setFont(self.big_font)
         self.ppm_label.setAlignment(Qt.AlignCenter)
+        self.ppm_label.setStyleSheet("""
+            QLabel {
+                background-color: #2a2a2a;
+                border: 3px solid #ff6b35;
+                border-radius: 15px;
+                padding: 20px;
+                margin: 10px;
+            }
+        """)
 
         self.last_update_label = QLabel("Last update: --")
         self.last_update_label.setFont(self.small_font)
         self.last_update_label.setAlignment(Qt.AlignCenter)
+        self.last_update_label.setStyleSheet("""
+            QLabel {
+                color: #cccccc;
+                background-color: #333333;
+                border-radius: 5px;
+                padding: 5px;
+            }
+        """)
 
         self.status_label = QLabel("Modem: -- | Signal: --")
         self.status_label.setFont(self.small_font)
         self.status_label.setAlignment(Qt.AlignCenter)
+        self.status_label.setStyleSheet("""
+            QLabel {
+                color: #cccccc;
+                background-color: #333333;
+                border-radius: 5px;
+                padding: 5px;
+            }
+        """)
 
+        # Signal strength bar with safety colors
         self.signal_bar = QProgressBar()
         self.signal_bar.setRange(0, 31)
         self.signal_bar.setFormat("Signal: %v")
-        self.signal_bar.setStyleSheet("QProgressBar{border:1px solid #2a3344; border-radius:6px; background:#0c111d;} QProgressBar::chunk{background-color:#29d19c;}")
+        self.signal_bar.setStyleSheet("""
+            QProgressBar {
+                border: 2px solid #ff6b35;
+                border-radius: 8px;
+                background-color: #2a2a2a;
+                text-align: center;
+                color: white;
+                font-weight: bold;
+            }
+            QProgressBar::chunk {
+                background-color: #ff6b35;
+                border-radius: 6px;
+            }
+        """)
 
-        # Busy/loading bar (indeterminate)
+        # Busy/loading bar (indeterminate) - hidden as we'll use modal dialog
         self.busy_bar = QProgressBar()
         self.busy_bar.setRange(0, 0)
         self.busy_bar.setVisible(False)
         self.busy_bar.setFixedHeight(10)
-        self.busy_bar.setStyleSheet("QProgressBar{border:1px solid #2a3344; border-radius:6px; background:#0c111d;} QProgressBar::chunk{background-color:#f5a524;}")
 
-        # Buttons
+        # Buttons with enhanced safety styling
         btn_row = QHBoxLayout()
-        self.sos_button = QPushButton("SOS")
+        btn_row.setSpacing(15)
+        
+        self.sos_button = QPushButton("🚨 SOS 🚨")
         self.sos_button.setFont(self.med_font)
-        self.sos_button.setMinimumHeight(70)
-        self.sos_button.setStyleSheet("background-color: #e0565b; color: #fff; border-radius: 10px;")
+        self.sos_button.setMinimumHeight(80)
+        self.sos_button.setStyleSheet("""
+            QPushButton {
+                background-color: #ff4444;
+                color: white;
+                border: 3px solid #cc0000;
+                border-radius: 15px;
+                font-weight: bold;
+                font-size: 16px;
+            }
+            QPushButton:hover {
+                background-color: #cc0000;
+                border-color: #aa0000;
+            }
+            QPushButton:pressed {
+                background-color: #aa0000;
+            }
+            QPushButton:disabled {
+                background-color: #666666;
+                border-color: #444444;
+                color: #aaaaaa;
+            }
+        """)
         self.sos_button.clicked.connect(self.on_sos_pressed)
 
-        self.send_button = QPushButton("SMS")
+        self.send_button = QPushButton("📱 SMS 📱")
         self.send_button.setFont(self.med_font)
-        self.send_button.setMinimumHeight(70)
-        self.send_button.setStyleSheet("background-color: #3a7bd5; color: #fff; border-radius: 10px;")
+        self.send_button.setMinimumHeight(80)
+        self.send_button.setStyleSheet("""
+            QPushButton {
+                background-color: #ff6b35;
+                color: white;
+                border: 3px solid #e55a2b;
+                border-radius: 15px;
+                font-weight: bold;
+                font-size: 16px;
+            }
+            QPushButton:hover {
+                background-color: #e55a2b;
+                border-color: #cc4a1b;
+            }
+            QPushButton:pressed {
+                background-color: #cc4a1b;
+            }
+            QPushButton:disabled {
+                background-color: #666666;
+                border-color: #444444;
+                color: #aaaaaa;
+            }
+        """)
         self.send_button.clicked.connect(self.on_send_pressed)
 
         btn_row.addWidget(self.sos_button)
         btn_row.addWidget(self.send_button)
 
-        # Contact selection row
+        # Contact selection row with safety styling
         contact_row = QHBoxLayout()
+        contact_row.setSpacing(10)
+        
+        contact_label = QLabel("📞 Contact:")
+        contact_label.setFont(self.med_font)
+        contact_label.setStyleSheet("color: #ff6b35; font-weight: bold;")
+        
         self.contact_dropdown = QComboBox()
         self.contact_dropdown.setFont(self.med_font)
         self.contact_dropdown.addItems(sorted(self.contacts.keys()))
+        self.contact_dropdown.setStyleSheet("""
+            QComboBox {
+                background-color: #2a2a2a;
+                color: white;
+                border: 2px solid #ff6b35;
+                border-radius: 8px;
+                padding: 5px;
+                font-weight: bold;
+            }
+            QComboBox::drop-down {
+                border: none;
+            }
+            QComboBox::down-arrow {
+                image: none;
+                border-left: 5px solid transparent;
+                border-right: 5px solid transparent;
+                border-top: 5px solid #ff6b35;
+                margin-right: 5px;
+            }
+            QComboBox QAbstractItemView {
+                background-color: #2a2a2a;
+                color: white;
+                border: 2px solid #ff6b35;
+                selection-background-color: #ff6b35;
+            }
+        """)
+        
         self.contact_label = QLabel(self.contacts.get(self.contact_dropdown.currentText(), self.alert_phone))
         self.contact_label.setFont(self.small_font)
         self.contact_label.setAlignment(Qt.AlignLeft)
+        self.contact_label.setStyleSheet("""
+            QLabel {
+                color: #cccccc;
+                background-color: #333333;
+                border-radius: 5px;
+                padding: 5px;
+                border: 1px solid #555555;
+            }
+        """)
+        
         self.contact_dropdown.currentIndexChanged.connect(self._on_contact_changed)
-        contact_row.addWidget(QLabel("Contact:"))
+        contact_row.addWidget(contact_label)
         contact_row.addWidget(self.contact_dropdown)
         contact_row.addWidget(self.contact_label)
 
         self.result_label = QLabel("")
         self.result_label.setFont(self.small_font)
         self.result_label.setAlignment(Qt.AlignCenter)
+        self.result_label.setStyleSheet("""
+            QLabel {
+                color: #ffffff;
+                background-color: #2a2a2a;
+                border-radius: 8px;
+                padding: 8px;
+                border: 2px solid #ff6b35;
+                font-weight: bold;
+            }
+        """)
 
         v = QVBoxLayout()
         v.addLayout(top_bar)
@@ -537,16 +778,52 @@ class MinerMonitorApp(QWidget):
             self.signals.modem_status.emit("Modem: Online")
         else:
             self.signals.modem_status.emit(f"Modem: Init failed - {msg}")
-    # Simple on-screen keyboard dialog for SMS text
+    # Enhanced on-screen keyboard dialog for SMS text with safety styling
     def open_sms_keyboard(self):
         dialog = QDialog(self)
-        dialog.setWindowTitle("Type SMS")
+        dialog.setWindowTitle("📱 Type SMS Message")
+        dialog.setFixedSize(500, 400)
+        dialog.setStyleSheet("""
+            QDialog {
+                background-color: #1a1a1a;
+                color: white;
+            }
+        """)
+        
         layout = QVBoxLayout(dialog)
+        layout.setSpacing(10)
 
+        # Title
+        title_label = QLabel("📱 Type Your Message")
+        title_label.setAlignment(Qt.AlignCenter)
+        title_label.setStyleSheet("""
+            QLabel {
+                color: #ff6b35;
+                font-size: 18px;
+                font-weight: bold;
+                padding: 10px;
+                background-color: #2a2a2a;
+                border: 2px solid #ff6b35;
+                border-radius: 8px;
+            }
+        """)
+        layout.addWidget(title_label)
+
+        # Input field
         input_line = QLineEdit()
         input_line.setFont(self.med_font)
-        input_line.setPlaceholderText("Type message...")
+        input_line.setPlaceholderText("Type your message here...")
         input_line.setReadOnly(True)
+        input_line.setStyleSheet("""
+            QLineEdit {
+                background-color: #2a2a2a;
+                color: white;
+                border: 2px solid #ff6b35;
+                border-radius: 8px;
+                padding: 10px;
+                font-size: 14px;
+            }
+        """)
         layout.addWidget(input_line)
 
         def append_text(t):
@@ -557,6 +834,7 @@ class MinerMonitorApp(QWidget):
             if txt:
                 input_line.setText(txt[:-1])
 
+        # Keyboard grid
         grid_rows = [
             list("1234567890"),
             list("qwertyuiop"),
@@ -565,24 +843,77 @@ class MinerMonitorApp(QWidget):
         ]
         for row in grid_rows:
             h = QHBoxLayout()
+            h.setSpacing(5)
             for ch in row:
                 b = QPushButton(ch.upper())
-                b.setMinimumHeight(36)
-                b.setStyleSheet("background:#1b2235; color:#e6eef8; border-radius:6px;")
+                b.setMinimumHeight(40)
+                b.setMinimumWidth(40)
+                b.setStyleSheet("""
+                    QPushButton {
+                        background-color: #ff6b35;
+                        color: white;
+                        border: 2px solid #e55a2b;
+                        border-radius: 8px;
+                        font-weight: bold;
+                        font-size: 14px;
+                    }
+                    QPushButton:hover {
+                        background-color: #e55a2b;
+                    }
+                    QPushButton:pressed {
+                        background-color: #cc4a1b;
+                    }
+                """)
                 b.clicked.connect(lambda _, c=ch: append_text(c))
                 h.addWidget(b)
             layout.addLayout(h)
 
+        # Control buttons
         controls = QHBoxLayout()
+        controls.setSpacing(10)
         for label, fn in [("SPACE", lambda: append_text(" ")), ("BACK", backspace), ("CLEAR", lambda: input_line.setText(""))]:
             b = QPushButton(label)
-            b.setMinimumHeight(36)
-            b.setStyleSheet("background:#25304d; color:#e6eef8; border-radius:6px;")
+            b.setMinimumHeight(40)
+            b.setStyleSheet("""
+                QPushButton {
+                    background-color: #2a2a2a;
+                    color: white;
+                    border: 2px solid #ff6b35;
+                    border-radius: 8px;
+                    font-weight: bold;
+                    font-size: 12px;
+                }
+                QPushButton:hover {
+                    background-color: #ff6b35;
+                }
+            """)
             b.clicked.connect(fn)
             controls.addWidget(b)
         layout.addLayout(controls)
 
+        # Dialog buttons
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.setStyleSheet("""
+            QPushButton {
+                background-color: #ff6b35;
+                color: white;
+                border: 2px solid #e55a2b;
+                border-radius: 8px;
+                padding: 8px 16px;
+                font-weight: bold;
+                min-width: 80px;
+            }
+            QPushButton:hover {
+                background-color: #e55a2b;
+            }
+            QPushButton#qt_msgboxbuttonbox_button {
+                background-color: #666666;
+                border-color: #444444;
+            }
+            QPushButton#qt_msgboxbuttonbox_button:hover {
+                background-color: #888888;
+            }
+        """)
         layout.addWidget(buttons)
         buttons.accepted.connect(dialog.accept)
         buttons.rejected.connect(dialog.reject)
@@ -595,19 +926,40 @@ class MinerMonitorApp(QWidget):
         self._last_ppm = ppm
         self.last_update_label.setText(f"Last update: {datetime.now().strftime('%H:%M:%S')}")
         self.ppm_label.setText(f"PPM: {ppm}")
+        
+        # Worker safety color scheme
         if ppm < PPM_WARN:
-            color = "#00cc66"
+            color = "#00ff00"  # Green - Safe
+            border_color = "#00cc00"
+            bg_color = "#1a3d1a"
         elif ppm < PPM_DANGER:
-            color = "#ffcc33"
+            color = "#ffaa00"  # Orange - Warning
+            border_color = "#ff8800"
+            bg_color = "#3d2a1a"
         else:
-            color = "#ff3333"
+            color = "#ff0000"  # Red - Danger
+            border_color = "#cc0000"
+            bg_color = "#3d1a1a"
             if not self._above_threshold:
                 self._above_threshold = True
-                self.result_label.setText("Auto SOS triggered due to high PPM")
+                self.result_label.setText("⚠️ AUTO SOS TRIGGERED - HIGH PPM DETECTED! ⚠️")
                 threading.Thread(target=self._send_sos_thread, daemon=True).start()
+        
         if ppm < PPM_DANGER:
             self._above_threshold = False
-        self.ppm_label.setStyleSheet(f"color: {color};")
+            
+        # Update PPM label styling with safety colors
+        self.ppm_label.setStyleSheet(f"""
+            QLabel {{
+                color: {color};
+                background-color: {bg_color};
+                border: 3px solid {border_color};
+                border-radius: 15px;
+                padding: 20px;
+                margin: 10px;
+                font-weight: bold;
+            }}
+        """)
 
     def update_modem_status(self, text):
         self.status_label.setText(text)
@@ -660,43 +1012,169 @@ class MinerMonitorApp(QWidget):
         QTimer.singleShot(0, _set)
 
     def on_sos_pressed(self):
-        threading.Thread(target=self._send_sos_thread, daemon=True).start()
+        # Show confirmation dialog for SOS
+        reply = QMessageBox.question(
+            self, 
+            "SOS Confirmation", 
+            "🚨 EMERGENCY SOS ALERT 🚨\n\nAre you sure you want to send an SOS message?\n\nThis will send an emergency alert to the selected contact.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            threading.Thread(target=self._send_sos_thread, daemon=True).start()
 
     def on_send_pressed(self):
-        number = self.alert_phone
-        text = self.open_sms_keyboard()
-        if not text:
-            return
-        threading.Thread(target=self._send_custom_thread, args=(number, text), daemon=True).start()
+        # Show confirmation dialog for SMS
+        reply = QMessageBox.question(
+            self, 
+            "SMS Confirmation", 
+            "📱 Send SMS Message 📱\n\nAre you sure you want to send a custom SMS message?\n\nThis will send a message to the selected contact.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            number = self.alert_phone
+            text = self.open_sms_keyboard()
+            if not text:
+                return
+            threading.Thread(target=self._send_custom_thread, args=(number, text), daemon=True).start()
 
     def _send_sos_thread(self):
-        self.set_busy(True, "Sending SOS...")
-        number = self.alert_phone
-        if not self.modem_ctrl.is_alive():
-            self.signals.sms_result.emit(False, "Modem not responding to AT")
-            self.set_busy(False, "")
-            return
-        ok, raw = self.modem_ctrl.send_sms_textmode(number, SOS_SMS_TEXT, timeout=20)
-        self.signals.sms_result.emit(ok, raw)
-        self.set_busy(False, "")
+        # Show loading dialog
+        self.loading_dialog = LoadingDialog(self, "🚨 Sending SOS Alert...")
+        self.loading_dialog.show()
+        
+        # Disable buttons
+        self.sos_button.setDisabled(True)
+        self.send_button.setDisabled(True)
+        
+        try:
+            number = self.alert_phone
+            if not self.modem_ctrl.is_alive():
+                self.signals.sms_result.emit(False, "Modem not responding to AT")
+                return
+            
+            # Update loading message
+            self.loading_dialog.update_message("🚨 Connecting to network...")
+            
+            ok, raw = self.modem_ctrl.send_sms_textmode(number, SOS_SMS_TEXT, timeout=20)
+            self.signals.sms_result.emit(ok, raw)
+        finally:
+            # Close loading dialog and re-enable buttons
+            if self.loading_dialog:
+                self.loading_dialog.close()
+                self.loading_dialog = None
+            self.sos_button.setDisabled(False)
+            self.send_button.setDisabled(False)
 
     def _send_custom_thread(self, number, text):
-        self.set_busy(True, "Sending message...")
-        if not self.modem_ctrl.is_alive():
-            self.signals.sms_result.emit(False, "Modem not responding to AT")
-            self.set_busy(False, "")
-            return
-        ok, raw = self.modem_ctrl.send_sms_textmode(number, text, timeout=20)
-        self.signals.sms_result.emit(ok, raw)
-        self.set_busy(False, "")
+        # Show loading dialog
+        self.loading_dialog = LoadingDialog(self, "📱 Sending SMS Message...")
+        self.loading_dialog.show()
+        
+        # Disable buttons
+        self.sos_button.setDisabled(True)
+        self.send_button.setDisabled(True)
+        
+        try:
+            if not self.modem_ctrl.is_alive():
+                self.signals.sms_result.emit(False, "Modem not responding to AT")
+                return
+            
+            # Update loading message
+            self.loading_dialog.update_message("📱 Connecting to network...")
+            
+            ok, raw = self.modem_ctrl.send_sms_textmode(number, text, timeout=20)
+            self.signals.sms_result.emit(ok, raw)
+        finally:
+            # Close loading dialog and re-enable buttons
+            if self.loading_dialog:
+                self.loading_dialog.close()
+                self.loading_dialog = None
+            self.sos_button.setDisabled(False)
+            self.send_button.setDisabled(False)
 
     def on_sms_result(self, ok, raw):
         if ok:
-            QMessageBox.information(self, "SMS Sent", f"Message sent successfully.\n\n{(raw or '')[:200]}")
-            self.result_label.setText("Last SMS: Sent")
+            # Success message with safety styling
+            msg = QMessageBox(self)
+            msg.setWindowTitle("✅ SMS Sent Successfully")
+            msg.setText("📱 Message sent successfully!")
+            msg.setInformativeText(f"Response: {(raw or '')[:200]}")
+            msg.setIcon(QMessageBox.Information)
+            msg.setStyleSheet("""
+                QMessageBox {
+                    background-color: #1a1a1a;
+                    color: white;
+                }
+                QMessageBox QLabel {
+                    color: white;
+                }
+                QPushButton {
+                    background-color: #ff6b35;
+                    color: white;
+                    border: 2px solid #e55a2b;
+                    border-radius: 8px;
+                    padding: 8px 16px;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background-color: #e55a2b;
+                }
+            """)
+            msg.exec_()
+            self.result_label.setText("✅ Last SMS: Sent Successfully")
+            self.result_label.setStyleSheet("""
+                QLabel {
+                    color: #00ff00;
+                    background-color: #1a3d1a;
+                    border-radius: 8px;
+                    padding: 8px;
+                    border: 2px solid #00cc00;
+                    font-weight: bold;
+                }
+            """)
         else:
-            QMessageBox.warning(self, "SMS Failed", f"Failed to send message.\n\n{(raw or '')[:200]}")
-            self.result_label.setText("Last SMS: Failed")
+            # Error message with safety styling
+            msg = QMessageBox(self)
+            msg.setWindowTitle("❌ SMS Failed")
+            msg.setText("📱 Failed to send message!")
+            msg.setInformativeText(f"Error: {(raw or '')[:200]}")
+            msg.setIcon(QMessageBox.Warning)
+            msg.setStyleSheet("""
+                QMessageBox {
+                    background-color: #1a1a1a;
+                    color: white;
+                }
+                QMessageBox QLabel {
+                    color: white;
+                }
+                QPushButton {
+                    background-color: #ff4444;
+                    color: white;
+                    border: 2px solid #cc0000;
+                    border-radius: 8px;
+                    padding: 8px 16px;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background-color: #cc0000;
+                }
+            """)
+            msg.exec_()
+            self.result_label.setText("❌ Last SMS: Failed")
+            self.result_label.setStyleSheet("""
+                QLabel {
+                    color: #ff0000;
+                    background-color: #3d1a1a;
+                    border-radius: 8px;
+                    padding: 8px;
+                    border: 2px solid #cc0000;
+                    font-weight: bold;
+                }
+            """)
 
     # Removed manage IDs and location handlers
 
