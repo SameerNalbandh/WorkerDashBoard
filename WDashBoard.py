@@ -23,7 +23,6 @@ import threading
 import queue
 import traceback
 from datetime import datetime
-import glob
 
 import serial
 from serial import SerialException
@@ -50,7 +49,7 @@ SOS_SMS_TEXT = "SOS: Dangerous gas levels detected!"
 PPM_WARN = 40
 PPM_DANGER = 50
 
-APP_TITLE = "Miner Safety Monitor"
+APP_TITLE = "Worker Safety Monitor"
 WINDOW_WIDTH = 480
 WINDOW_HEIGHT = 320
 
@@ -253,65 +252,6 @@ class ModemController:
                 except Exception:
                     pass
 
-    def start_gnss(self):
-        try_cmds = ["AT+QGNSS=1", "AT+QGPS=1", "AT+CGNSPWR=1"]
-        results = {}
-        for cmd in try_cmds:
-            try:
-                raw = self.send_at(cmd, wait_for=b"OK", timeout=1)
-                results[cmd] = raw.decode(errors="ignore")
-            except Exception as e:
-                results[cmd] = f"ERR:{e}"
-        return results
-
-    def get_gnss_location(self, timeout=6):
-        with self.lock:
-            ser = self._open()
-            try:
-                ser.write(b"AT+QGNSSLOC?\r")
-                time.sleep(1)
-                out = ser.read_all().decode(errors="ignore")
-                for line in out.splitlines():
-                    if line.startswith("+QGNSSLOC:"):
-                        parts = line.split(":")[1].strip().split(",")
-                        try:
-                            lat = float(parts[1])
-                            lon = float(parts[2])
-                            return {"lat": lat, "lon": lon, "raw": out}
-                        except Exception:
-                            pass
-
-                ser.write(b"AT+QGPSLOC?\r")
-                time.sleep(1)
-                out = ser.read_all().decode(errors="ignore")
-                for line in out.splitlines():
-                    if line.startswith("+QGPSLOC:"):
-                        parts = line.split(":")[1].strip().split(",")
-                        try:
-                            lat = float(parts[1])
-                            lon = float(parts[2])
-                            return {"lat": lat, "lon": lon, "raw": out}
-                        except Exception:
-                            pass
-
-                ser.write(b"AT+CGNSINF\r")
-                time.sleep(1)
-                out = ser.read_all().decode(errors="ignore")
-                for line in out.splitlines():
-                    if line.startswith("+CGNSINF:"):
-                        fields = line.split(":")[1].strip().split(",")
-                        if fields[1] == "1":
-                            lat = float(fields[3])
-                            lon = float(fields[4])
-                            return {"lat": lat, "lon": lon, "raw": out}
-                return None
-            except Exception:
-                return None
-            finally:
-                try:
-                    ser.close()
-                except Exception:
-                    pass
 
     def make_call(self, number, timeout=30):
         """Make a call to the specified number"""
@@ -410,37 +350,11 @@ class ModemController:
                     pass
 
 # -----------------------------
-# Auto-detect modem
+# Get modem port (EC200U-CNAA on AMA5)
 # -----------------------------
-def auto_detect_modem(baud=MODEM_BAUD, timeout=2):
-    # Try AMA5 port first (EC200U-CNAA)
-    try:
-        ser = serial.Serial(MODEM_PORT, baudrate=baud, timeout=timeout)
-        ser.write(b"AT\r")
-        time.sleep(0.3)
-        resp = ser.read(128)
-        ser.close()
-        if b"OK" in resp:
-            print(f"[INFO] Found EC200U-CNAA modem on {MODEM_PORT}")
-            return MODEM_PORT
-    except Exception as e:
-        print(f"[INFO] AMA5 port not available: {e}")
-    
-    # Fallback to USB ports
-    ports = sorted(glob.glob("/dev/ttyUSB*"))
-    for p in ports:
-        try:
-            ser = serial.Serial(p, baudrate=baud, timeout=timeout)
-            ser.write(b"AT\r")
-            time.sleep(0.3)
-            resp = ser.read(128)
-            ser.close()
-            if b"OK" in resp:
-                print(f"[INFO] Found modem on {p}")
-                return p
-        except Exception:
-            pass
-    return None
+def get_modem_port():
+    """Return the AMA5 port for EC200U-CNAA modem"""
+    return MODEM_PORT
 
 # -----------------------------
 # GUI Signals
@@ -449,7 +363,6 @@ class AppSignals(QObject):
     ppm_update = pyqtSignal(int)
     modem_status = pyqtSignal(str)
     sms_result = pyqtSignal(bool, str)
-    gnss_update = pyqtSignal(object)
     gsm_signal = pyqtSignal(object)
     call_status = pyqtSignal(str)
     call_timer = pyqtSignal(int)
@@ -478,7 +391,7 @@ class MinerMonitorApp(QWidget):
 
         # Top bar
         top_bar = QHBoxLayout()
-        self.title_label = QLabel("MINER SAFETY")
+        self.title_label = QLabel("WORKER SAFETY MONITOR")
         self.title_label.setFont(self.title_font)
         self.title_label.setAlignment(Qt.AlignCenter)
         close_btn = QPushButton("Close")
@@ -499,10 +412,6 @@ class MinerMonitorApp(QWidget):
         self.status_label = QLabel("Modem: -- | Signal: --")
         self.status_label.setFont(self.small_font)
         self.status_label.setAlignment(Qt.AlignCenter)
-
-        self.signal_bar = QProgressBar()
-        self.signal_bar.setRange(0, 31)
-        self.signal_bar.setFormat("Signal: %v")
 
         # Buttons
         btn_row1 = QHBoxLayout()
@@ -538,26 +447,6 @@ class MinerMonitorApp(QWidget):
         btn_row2.addWidget(self.send_button)
         btn_row2.addWidget(self.hangup_button)
 
-        # Custom message controls
-        custom_row = QHBoxLayout()
-        self.id_dropdown = QComboBox()
-        self.id_dropdown.setFont(self.med_font)
-        self.id_dropdown.addItems(sorted(self.message_ids.keys()))
-        self.phone_display = QLabel(self.message_ids.get(self.id_dropdown.currentText(), ""))
-        self.phone_display.setFont(self.small_font)
-        self.manage_ids_btn = QPushButton("Manage IDs")
-        self.manage_ids_btn.setFont(self.small_font)
-        self.manage_ids_btn.clicked.connect(self.manage_ids_dialog)
-        self.id_dropdown.currentIndexChanged.connect(self._update_phone_display)
-
-        custom_row.addWidget(self.id_dropdown)
-        custom_row.addWidget(self.phone_display)
-        custom_row.addWidget(self.manage_ids_btn)
-
-        self.message_input = QLineEdit()
-        self.message_input.setFont(self.small_font)
-        self.message_input.setPlaceholderText("Custom message...")
-
         # Call status and timer
         call_status_row = QHBoxLayout()
         self.call_status_label = QLabel("Call Status: Ready")
@@ -568,15 +457,23 @@ class MinerMonitorApp(QWidget):
         call_status_row.addWidget(self.call_status_label)
         call_status_row.addWidget(self.call_timer_label)
 
-        # GNSS row
-        gnss_row = QHBoxLayout()
-        self.loc_label = QLabel("Location: --")
-        self.loc_label.setFont(self.small_font)
-        self.loc_btn = QPushButton("Get Location")
-        self.loc_btn.setFont(self.small_font)
-        self.loc_btn.clicked.connect(self.on_get_location)
-        gnss_row.addWidget(self.loc_label)
-        gnss_row.addWidget(self.loc_btn)
+        # Select number
+        number_row = QHBoxLayout()
+        self.id_dropdown = QComboBox()
+        self.id_dropdown.setFont(self.med_font)
+        self.id_dropdown.addItems(sorted(self.message_ids.keys()))
+        self.phone_display = QLabel(self.message_ids.get(self.id_dropdown.currentText(), ""))
+        self.phone_display.setFont(self.small_font)
+        self.id_dropdown.currentIndexChanged.connect(self._update_phone_display)
+
+        number_row.addWidget(QLabel("Select:"))
+        number_row.addWidget(self.id_dropdown)
+        number_row.addWidget(self.phone_display)
+
+        # Custom message input
+        self.message_input = QLineEdit()
+        self.message_input.setFont(self.small_font)
+        self.message_input.setPlaceholderText("Enter message...")
 
         self.result_label = QLabel("")
         self.result_label.setFont(self.small_font)
@@ -587,13 +484,11 @@ class MinerMonitorApp(QWidget):
         v.addWidget(self.ppm_label)
         v.addWidget(self.last_update_label)
         v.addWidget(self.status_label)
-        v.addWidget(self.signal_bar)
         v.addLayout(btn_row1)
         v.addLayout(btn_row2)
         v.addLayout(call_status_row)
-        v.addLayout(custom_row)
+        v.addLayout(number_row)
         v.addWidget(self.message_input)
-        v.addLayout(gnss_row)
         v.addWidget(self.result_label)
         self.setLayout(v)
 
@@ -601,7 +496,6 @@ class MinerMonitorApp(QWidget):
         self.signals.ppm_update.connect(self.update_ppm)
         self.signals.modem_status.connect(self.update_modem_status)
         self.signals.sms_result.connect(self.on_sms_result)
-        self.signals.gnss_update.connect(self.on_gnss_update)
         self.signals.gsm_signal.connect(self.on_gsm_signal)
         self.signals.call_status.connect(self.update_call_status)
         self.signals.call_timer.connect(self.update_call_timer)
@@ -644,17 +538,10 @@ class MinerMonitorApp(QWidget):
     def update_modem_status(self, text):
         self.status_label.setText(text)
 
-    def on_gnss_update(self, data):
-        if data is None:
-            self.loc_label.setText("Location: No fix")
-        else:
-            self.loc_label.setText(f"Location: {data.get('lat'):.6f}, {data.get('lon'):.6f}")
-
     def on_gsm_signal(self, val):
         if val is None:
             self.status_label.setText("Modem: Online | Signal: ?")
         else:
-            self.signal_bar.setValue(val)
             self.status_label.setText(f"Modem: Online | Signal: {val}")
 
     def update_call_status(self, status):
@@ -718,8 +605,6 @@ class MinerMonitorApp(QWidget):
             self.sos_button.setDisabled(busy)
             self.send_button.setDisabled(busy)
             self.call_button.setDisabled(busy)
-            self.manage_ids_btn.setDisabled(busy)
-            self.loc_btn.setDisabled(busy)
             self.result_label.setText(text)
         QTimer.singleShot(0, _set)
 
@@ -811,55 +696,7 @@ class MinerMonitorApp(QWidget):
             QMessageBox.warning(self, "SMS Failed", f"Failed to send message.\n\n{(raw or '')[:200]}")
             self.result_label.setText("Last SMS: Failed")
 
-    def on_get_location(self):
-        self.set_busy(True, "Acquiring location...")
-        threading.Thread(target=self._gnss_thread, daemon=True).start()
 
-    def _gnss_thread(self):
-        self.modem_ctrl.start_gnss()
-        time.sleep(1)
-        loc = self.modem_ctrl.get_gnss_location(timeout=6)
-        self.signals.gnss_update.emit(loc)
-        self.set_busy(False, "")
-
-    def manage_ids_dialog(self):
-        d = QDialog(self)
-        d.setWindowTitle("Manage Message IDs")
-        layout = QFormLayout(d)
-
-        editors = {}
-        keys = sorted(self.message_ids.keys())
-        new_id_input = QLineEdit()
-        new_phone_input = QLineEdit()
-        new_id_input.setPlaceholderText("New ID")
-        new_phone_input.setPlaceholderText("Phone number (+91...)")
-        layout.addRow(QLabel("New ID:"), new_id_input)
-        layout.addRow(QLabel("Phone:"), new_phone_input)
-
-        for k in keys:
-            le = QLineEdit(self.message_ids.get(k, ""))
-            layout.addRow(QLabel(k + ":"), le)
-            editors[k] = le
-
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        layout.addWidget(buttons)
-        buttons.accepted.connect(d.accept)
-        buttons.rejected.connect(d.reject)
-
-        if d.exec_() == QDialog.Accepted:
-            nid = new_id_input.text().strip()
-            nphone = new_phone_input.text().strip()
-            if nid and nphone:
-                self.message_ids[nid] = nphone
-            for k, le in editors.items():
-                v = le.text().strip()
-                if v:
-                    self.message_ids[k] = v
-                else:
-                    self.message_ids.pop(k, None)
-            self.id_dropdown.clear()
-            self.id_dropdown.addItems(sorted(self.message_ids.keys()))
-            self._update_phone_display()
 
 # -----------------------------
 # Main
@@ -869,10 +706,9 @@ def main():
     ze03_reader = SerialReaderThread(ZE03_SERIAL, ZE03_BAUD, ze03_queue, name="ZE03Reader")
     ze03_reader.start()
 
-    modem_port = auto_detect_modem(baud=MODEM_BAUD, timeout=2)
-    if modem_port is None:
-        print("ERROR: No modem found on AMA5 or USB ports")
-        sys.exit(1)
+    # Use AMA5 port directly for EC200U-CNAA
+    modem_port = get_modem_port()
+    print(f"[INFO] Using EC200U-CNAA modem on {modem_port}")
 
     modem = ModemController(modem_port, MODEM_BAUD, timeout=2)
 
