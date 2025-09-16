@@ -25,7 +25,6 @@ DEVICE_NAME = "Pi Sensor - Main Room"
 LOCATION_NAME = "Main Room"
 LOCATION_LAT = 40.7160
 LOCATION_LNG = -74.0040
-
 SEND_INTERVAL = 1   # seconds
 
 # --- STEP 3: INITIALIZE FIREBASE ADMIN ---
@@ -43,20 +42,35 @@ UART_PORT = "/dev/ttyAMA0"   # S0 port on Pi
 BAUD_RATE = 9600
 ser = serial.Serial(UART_PORT, BAUD_RATE, timeout=1)
 
+# --- ZE03 Checksum Validation ---
+def fuc_checksum(frame: bytes) -> int:
+    """
+    Winsen ZE03 checksum: sum(Byte1...Byte7) -> (~sum)+1
+    Expects full 9-byte frame.
+    """
+    total = 0
+    for b in frame[1:8]:  # skip 0xFF, include bytes 1..7
+        total += b
+    return ((~total) + 1) & 0xFF
+
 def read_co_sensor():
     """
     Reads CO concentration (ppm) from Winsen ZE03 via UART.
-    Returns float ppm or None if invalid.
+    Returns int ppm or None if invalid.
     """
     try:
         if ser.in_waiting >= 9:
             frame = ser.read(9)
             if frame[0] == 0xFF and frame[1] == 0x86:
-                high = frame[2]
-                low = frame[3]
-                ppm = (high << 8) | low
-                print(f"📟 Read ZE03 sensor value: {ppm} PPM")
-                return ppm
+                checksum = fuc_checksum(frame)
+                if checksum == frame[8]:
+                    high = frame[2]
+                    low = frame[3]
+                    ppm = (high << 8) | low
+                    print(f"📟 Valid frame: {ppm} PPM")
+                    return ppm
+                else:
+                    print(f"⚠️ Checksum failed: got {frame[8]:02X}, expected {checksum:02X}")
     except Exception as e:
         print(f"⚠️ UART read error: {e}")
     return None
