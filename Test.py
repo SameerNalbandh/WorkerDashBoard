@@ -8,16 +8,17 @@ import datetime
 # --- CONFIGURATION ---
 DEVICE_ID = "SN-PI-001"
 PROJECT_ID = "studio-5053909228-90740"
-APN = "jionet"  # change if different SIM
+APN = "jionet"  # change if needed
+
+SEND_INTERVAL = 10  # seconds
+TOKEN_REFRESH_INTERVAL = 55 * 60  # refresh every 55 min
 
 # --- SERVICE ACCOUNT INFO ---
 SERVICE_ACCOUNT = {
   "type": "service_account",
   "project_id": "studio-5053909228-90740",
   "private_key_id": "e92d42f35f7a606c3713e4af63f4e41ad3296ec5",
-  "private_key": """-----BEGIN PRIVATE KEY-----
-MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBK...
------END PRIVATE KEY-----\n""",
+  "private_key": "-----BEGIN PRIVATE KEY-----\\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBK...snip...\n-----END PRIVATE KEY-----\\n",
   "client_email": "firebase-adminsdk-fbsvc@studio-5053909228-90740.iam.gserviceaccount.com",
   "client_id": "109877301737436156902",
   "auth_uri": "https://accounts.google.com/o/oauth2/auth",
@@ -28,12 +29,10 @@ MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBK...
 }
 
 # --- SERIAL PORTS ---
-# Winsen ZE03 CO sensor
-ser_sensor = serial.Serial("/dev/ttyS0", baudrate=9600, timeout=1)
-# Quectel EC200Y modem
-ser_modem = serial.Serial("/dev/ttyAMA5", baudrate=115200, timeout=2)
+ser_sensor = serial.Serial("/dev/ttyS0", baudrate=9600, timeout=1)      # Winsen ZE03 sensor
+ser_modem = serial.Serial("/dev/ttyAMA5", baudrate=115200, timeout=2)   # EC200Y modem
 
-# --- HELPERS ---
+# --- AT COMMAND HELPERS ---
 def send_at(cmd, delay=1):
     """Send AT command and return response."""
     ser_modem.write((cmd + "\r\n").encode())
@@ -51,6 +50,7 @@ def init_modem():
     send_at('AT+QHTTPCFG="contextid",1')
     send_at('AT+QHTTPCFG="responseheader",1')
 
+# --- FIREBASE AUTH ---
 def make_token():
     """Generate OAuth2 access token for Firestore."""
     iat = int(time.time())
@@ -63,7 +63,11 @@ def make_token():
         "exp": exp
     }
     headers = {"kid": SERVICE_ACCOUNT["private_key_id"]}
-    signed_jwt = jwt.encode(payload, SERVICE_ACCOUNT["private_key"], algorithm="RS256", headers=headers)
+
+    # 🔑 Fix: convert \n into actual newlines
+    private_key = SERVICE_ACCOUNT["private_key"].replace("\\n", "\n")
+
+    signed_jwt = jwt.encode(payload, private_key, algorithm="RS256", headers=headers)
 
     resp = requests.post("https://oauth2.googleapis.com/token", data={
         "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
@@ -77,6 +81,7 @@ def make_token():
         print("❌ Token error:", resp.text)
         return None
 
+# --- SENSOR ---
 def read_co_sensor():
     """Read CO ppm from Winsen ZE03 sensor."""
     request_cmd = bytearray([0xFF, 0x01, 0x86, 0, 0, 0, 0, 0, 0x79])
@@ -90,6 +95,7 @@ def read_co_sensor():
         print("⚠️ Invalid sensor response")
         return None
 
+# --- FIRESTORE POST ---
 def post_to_firestore(co_level, token):
     """Post CO data to Firestore using modem AT commands."""
     url = f"https://firestore.googleapis.com/v1/projects/{PROJECT_ID}/databases/(default)/documents/devices/{DEVICE_ID}"
@@ -126,9 +132,16 @@ if __name__ == "__main__":
     if not token:
         exit()
 
+    token_time = time.time()
+
     while True:
+        # Refresh token if expired
+        if time.time() - token_time > TOKEN_REFRESH_INTERVAL:
+            token = make_token()
+            token_time = time.time()
+
         co = read_co_sensor()
         if co is not None:
             post_to_firestore(co, token)
-        print("⏳ Waiting 10s...\n")
-        time.sleep(10)
+        print(f"⏳ Waiting {SEND_INTERVAL}s...\n")
+        time.sleep(SEND_INTERVAL)
