@@ -7,37 +7,31 @@ import datetime
 
 # --- CONFIG ---
 DEVICE_ID = "SN-PI-001"
+PROJECT_ID = "studio-5053909228-90740"
 APN = "airtelgprs.com"
 PDP_CONTEXT = 3   # Airtel works on context 3
 SEND_INTERVAL = 15
-TOKEN_REFRESH_INTERVAL = 55 * 60  # refresh token every 55 minutes
+TOKEN_REFRESH_INTERVAL = 55 * 60
 
-# --- KEEP PRIVATE KEY SEPARATE ---
+# --- KEEP PRIVATE KEY SEPARATE (paste full PEM here) ---
 PRIVATE_KEY_PEM = """-----BEGIN PRIVATE KEY-----
 MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEA...
-... paste your full key here ...
+...paste full key here...
 -----END PRIVATE KEY-----"""
 
-# --- SERVICE ACCOUNT INFO (rest of JSON) ---
+# --- SERVICE ACCOUNT INFO ---
 SERVICE_ACCOUNT_INFO = {
   "type": "service_account",
-  "project_id": "studio-5053909228-90740",
-  "private_key_id": "e92d42f35f7a606c3713e4af63f4e41ad3296ec5",
+  "project_id": PROJECT_ID,
+  "private_key_id": "90f1efbb3e10ab661699642a5bd176c308861ebd",
   "private_key": PRIVATE_KEY_PEM,
   "client_email": "firebase-adminsdk-fbsvc@studio-5053909228-90740.iam.gserviceaccount.com",
-  "client_id": "109877301737436156902",
-  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-  "token_uri": "https://oauth2.googleapis.com/token",
-  "auth_provider_x509_cert_url": "https://www.googleapis.com/v1/certs",
-  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/firebase-adminsdk-fbsvc%4Studio-5053909228-90740.iam.gserviceaccount.com",
-  "universe_domain": "googleapis.com"
+  "token_uri": "https://oauth2.googleapis.com/token"
 }
 
-PROJECT_ID = SERVICE_ACCOUNT_INFO["project_id"]
-
 # --- SERIAL PORTS ---
-ser_sensor = serial.Serial("/dev/ttyS0", baudrate=9600, timeout=1)      # ZE03 sensor
-ser_modem = serial.Serial("/dev/ttyAMA5", baudrate=115200, timeout=2)   # EC200Y modem
+ser_sensor = serial.Serial("/dev/ttyS0", baudrate=9600, timeout=1)      # Winsen ZE03
+ser_modem = serial.Serial("/dev/ttyAMA5", baudrate=115200, timeout=2)   # EC200Y
 
 # --- AT Helpers ---
 def send_at(cmd, delay=1):
@@ -48,7 +42,7 @@ def send_at(cmd, delay=1):
     return resp
 
 def init_modem():
-    print("📡 Initializing modem (Airtel, PDP context 3)...")
+    print("📡 Initializing modem (PDP context {})...".format(PDP_CONTEXT))
     send_at("AT")
     send_at("ATE0")
     send_at(f'AT+CGDCONT={PDP_CONTEXT},"IP","{APN}"')
@@ -68,16 +62,12 @@ def make_token():
         "iat": iat,
         "exp": exp
     }
-
     headers = {"kid": SERVICE_ACCOUNT_INFO["private_key_id"]}
 
     private_key = SERVICE_ACCOUNT_INFO["private_key"].strip()
 
     # Debug check
-    print("🔑 PEM check:")
-    print(private_key.splitlines()[0])   # BEGIN
-    print(private_key.splitlines()[1][:20])  # should start with MIIEv
-    print(private_key.splitlines()[-1])  # END
+    print("🔑 PEM check:", private_key.splitlines()[0], "...", private_key.splitlines()[-1])
 
     signed_jwt = jwt.encode(payload, private_key, algorithm="RS256", headers=headers)
 
@@ -96,20 +86,19 @@ def make_token():
 
 # --- Sensor ---
 def read_co_sensor():
-    req = bytearray([0xFF, 0x01, 0x86, 0, 0, 0, 0, 0, 0x79])
+    req = bytearray([0xFF,0x01,0x86,0,0,0,0,0,0x79])
     ser_sensor.write(req)
     resp = ser_sensor.read(9)
-    if len(resp) == 9 and resp[0] == 0xFF and resp[1] == 0x86:
-        co_ppm = (resp[2] << 8) | resp[3]
-        print(f"📟 CO: {co_ppm} ppm")
-        return co_ppm
+    if len(resp)==9 and resp[0]==0xFF and resp[1]==0x86:
+        co = (resp[2]<<8)|resp[3]
+        print(f"📟 CO: {co} ppm")
+        return co
     print("⚠️ Sensor error")
     return None
 
 # --- Firestore Post ---
 def post_firestore(co_level, token):
     url = f"https://firestore.googleapis.com/v1/projects/{PROJECT_ID}/databases/(default)/documents/devices/{DEVICE_ID}"
-    
     body = {
         "fields": {
             "id": {"stringValue": DEVICE_ID},
