@@ -113,53 +113,25 @@ class EcoGuardDashboard:
         
     def create_header(self, parent):
         header_frame = tk.Frame(parent, bg=self.colors['primary'])
-        header_frame.pack(fill=tk.X, pady=(0, 40))
+        header_frame.pack(fill=tk.X, pady=(0, 30))
         
-        # Top bar with title and exit button
-        top_bar = tk.Frame(header_frame, bg=self.colors['primary'])
-        top_bar.pack(fill=tk.X)
-        
-        # Logo/Title section
-        title_frame = tk.Frame(top_bar, bg=self.colors['primary'])
-        title_frame.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        
-        # Main title with icon
-        title_label = tk.Label(
-            title_frame,
-            text="🌍 EcoGuard",
-            font=("Segoe UI", 56, "bold"),
-            fg=self.colors['accent'],
-            bg=self.colors['primary']
-        )
-        title_label.pack(anchor=tk.W)
-        
-        # Subtitle
-        subtitle_label = tk.Label(
-            title_frame,
-            text="Environmental Monitoring & Safety Dashboard",
-            font=("Segoe UI", 18),
-            fg=self.colors['text_secondary'],
-            bg=self.colors['primary']
-        )
-        subtitle_label.pack(anchor=tk.W, pady=(5, 0))
-        
-        # Exit button
+        # Exit button in top right
         exit_button = tk.Button(
-            top_bar,
+            header_frame,
             text="✕",
-            font=("Segoe UI", 24, "bold"),
+            font=("Segoe UI", 20, "bold"),
             fg=self.colors['text_primary'],
             bg=self.colors['danger'],
             activebackground="#ff2d2d",
             activeforeground=self.colors['text_primary'],
             relief=tk.FLAT,
             bd=0,
-            width=3,
+            width=2,
             height=1,
             cursor="hand2",
             command=self.on_closing
         )
-        exit_button.pack(side=tk.RIGHT, padx=(20, 0))
+        exit_button.pack(anchor=tk.NE, padx=20, pady=10)
         
         # Add hover effects for exit button
         def on_enter(e):
@@ -171,9 +143,33 @@ class EcoGuardDashboard:
         exit_button.bind("<Enter>", on_enter)
         exit_button.bind("<Leave>", on_leave)
         
-        # Status bar
-        status_frame = tk.Frame(header_frame, bg=self.colors['secondary'], relief=tk.RAISED, bd=1)
-        status_frame.pack(fill=tk.X, pady=(20, 0))
+        # Centered title section
+        title_frame = tk.Frame(header_frame, bg=self.colors['primary'])
+        title_frame.pack(expand=True, fill=tk.BOTH)
+        
+        # Main title with icon - CENTERED
+        title_label = tk.Label(
+            title_frame,
+            text="🌍 EcoGuard",
+            font=("Segoe UI", 64, "bold"),
+            fg=self.colors['accent'],
+            bg=self.colors['primary']
+        )
+        title_label.pack(pady=(20, 10))
+        
+        # Subtitle - CENTERED
+        subtitle_label = tk.Label(
+            title_frame,
+            text="Environmental Monitoring & Safety Dashboard",
+            font=("Segoe UI", 20),
+            fg=self.colors['text_secondary'],
+            bg=self.colors['primary']
+        )
+        subtitle_label.pack(pady=(0, 20))
+        
+        # Status bar - CENTERED
+        status_frame = tk.Frame(title_frame, bg=self.colors['secondary'], relief=tk.RAISED, bd=1)
+        status_frame.pack(pady=(0, 20))
         
         status_label = tk.Label(
             status_frame,
@@ -181,17 +177,18 @@ class EcoGuardDashboard:
             font=("Segoe UI", 12),
             fg=self.colors['success'],
             bg=self.colors['secondary'],
-            pady=10
+            pady=8,
+            padx=20
         )
         status_label.pack()
         
     def create_content(self, parent):
         content_frame = tk.Frame(parent, bg=self.colors['primary'])
-        content_frame.pack(fill=tk.BOTH, expand=True)
+        content_frame.pack(fill=tk.BOTH, expand=True, padx=50)
         
-        # Create cards container
+        # Create cards container - CENTERED
         cards_frame = tk.Frame(content_frame, bg=self.colors['primary'])
-        cards_frame.pack(expand=True)
+        cards_frame.pack(expand=True, pady=20)
         
         # Mining Safety Card
         self.create_mining_card(cards_frame)
@@ -200,24 +197,24 @@ class EcoGuardDashboard:
         self.create_pollution_card(cards_frame)
         
     def create_mining_card(self, parent):
-        # Card container
+        # Card container with better styling
         card_frame = tk.Frame(
             parent,
             bg=self.colors['card_bg'],
             relief=tk.RAISED,
-            bd=2
+            bd=3
         )
-        card_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 20))
+        card_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 15))
         
         # Card header
-        header_frame = tk.Frame(card_frame, bg=self.colors['danger'], height=80)
+        header_frame = tk.Frame(card_frame, bg=self.colors['danger'], height=100)
         header_frame.pack(fill=tk.X)
         header_frame.pack_propagate(False)
         
         header_label = tk.Label(
             header_frame,
             text="⛏️ Mining Safety",
-            font=("Segoe UI", 24, "bold"),
+            font=("Segoe UI", 28, "bold"),
             fg=self.colors['text_primary'],
             bg=self.colors['danger']
         )
@@ -225,7 +222,7 @@ class EcoGuardDashboard:
         
         # Card content
         content_frame = tk.Frame(card_frame, bg=self.colors['card_bg'])
-        content_frame.pack(fill=tk.BOTH, expand=True, padx=30, pady=30)
+        content_frame.pack(fill=tk.BOTH, expand=True, padx=25, pady=25)
         
         # Description
         desc_label = tk.Label(
@@ -234,15 +231,15 @@ class EcoGuardDashboard:
             font=("Segoe UI", 14),
             fg=self.colors['text_secondary'],
             bg=self.colors['card_bg'],
-            wraplength=300,
+            wraplength=350,
             justify=tk.CENTER
         )
-        desc_label.pack(pady=(0, 30))
+        desc_label.pack(pady=(0, 25))
         
         # Features list
         features = [
             "🔍 Real-time monitoring",
-            "⚠️ Safety alerts",
+            "⚠️ Safety alerts", 
             "📊 Compliance reports",
             "🌱 Environmental impact"
         ]
@@ -251,41 +248,59 @@ class EcoGuardDashboard:
             feature_label = tk.Label(
                 content_frame,
                 text=feature,
-                font=("Segoe UI", 12),
+                font=("Segoe UI", 13),
                 fg=self.colors['text_primary'],
                 bg=self.colors['card_bg'],
                 anchor=tk.W
             )
-            feature_label.pack(fill=tk.X, pady=2)
+            feature_label.pack(fill=tk.X, pady=3)
         
-        # Action button
-        self.create_action_button(
+        # Action button - BIGGER and MORE VISIBLE
+        action_button = tk.Button(
             content_frame,
-            "Access Dashboard",
-            self.mining_action,
-            self.colors['danger'],
-            self.colors['hover_bg']
+            text="🚀 Access Dashboard",
+            font=("Segoe UI", 18, "bold"),
+            bg=self.colors['danger'],
+            fg=self.colors['text_primary'],
+            activebackground="#ff2d2d",
+            activeforeground=self.colors['text_primary'],
+            relief=tk.FLAT,
+            bd=0,
+            pady=20,
+            cursor="hand2",
+            command=self.mining_action
         )
+        action_button.pack(fill=tk.X, pady=(25, 0))
+        
+        # Add hover effects
+        def on_enter(e):
+            action_button.configure(bg="#ff2d2d")
+            
+        def on_leave(e):
+            action_button.configure(bg=self.colors['danger'])
+            
+        action_button.bind("<Enter>", on_enter)
+        action_button.bind("<Leave>", on_leave)
         
     def create_pollution_card(self, parent):
-        # Card container
+        # Card container with better styling
         card_frame = tk.Frame(
             parent,
             bg=self.colors['card_bg'],
             relief=tk.RAISED,
-            bd=2
+            bd=3
         )
-        card_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(20, 0))
+        card_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(15, 0))
         
         # Card header
-        header_frame = tk.Frame(card_frame, bg=self.colors['success'], height=80)
+        header_frame = tk.Frame(card_frame, bg=self.colors['success'], height=100)
         header_frame.pack(fill=tk.X)
         header_frame.pack_propagate(False)
         
         header_label = tk.Label(
             header_frame,
             text="🌿 Pollution Control",
-            font=("Segoe UI", 24, "bold"),
+            font=("Segoe UI", 28, "bold"),
             fg=self.colors['text_primary'],
             bg=self.colors['success']
         )
@@ -293,7 +308,7 @@ class EcoGuardDashboard:
         
         # Card content
         content_frame = tk.Frame(card_frame, bg=self.colors['card_bg'])
-        content_frame.pack(fill=tk.BOTH, expand=True, padx=30, pady=30)
+        content_frame.pack(fill=tk.BOTH, expand=True, padx=25, pady=25)
         
         # Description
         desc_label = tk.Label(
@@ -302,10 +317,10 @@ class EcoGuardDashboard:
             font=("Segoe UI", 14),
             fg=self.colors['text_secondary'],
             bg=self.colors['card_bg'],
-            wraplength=300,
+            wraplength=350,
             justify=tk.CENTER
         )
-        desc_label.pack(pady=(0, 30))
+        desc_label.pack(pady=(0, 25))
         
         # Features list
         features = [
@@ -319,51 +334,40 @@ class EcoGuardDashboard:
             feature_label = tk.Label(
                 content_frame,
                 text=feature,
-                font=("Segoe UI", 12),
+                font=("Segoe UI", 13),
                 fg=self.colors['text_primary'],
                 bg=self.colors['card_bg'],
                 anchor=tk.W
             )
-            feature_label.pack(fill=tk.X, pady=2)
+            feature_label.pack(fill=tk.X, pady=3)
         
-        # Action button
-        self.create_action_button(
+        # Action button - BIGGER and MORE VISIBLE
+        action_button = tk.Button(
             content_frame,
-            "Launch Agent",
-            self.pollution_action,
-            self.colors['success'],
-            self.colors['hover_bg']
-        )
-        
-    def create_action_button(self, parent, text, command, bg_color, hover_color):
-        button_frame = tk.Frame(parent, bg=self.colors['card_bg'])
-        button_frame.pack(fill=tk.X, pady=(30, 0))
-        
-        button = tk.Button(
-            button_frame,
-            text=text,
-            font=("Segoe UI", 16, "bold"),
-            bg=bg_color,
+            text="🌱 Launch Agent",
+            font=("Segoe UI", 18, "bold"),
+            bg=self.colors['success'],
             fg=self.colors['text_primary'],
-            activebackground=hover_color,
+            activebackground="#00cc66",
             activeforeground=self.colors['text_primary'],
             relief=tk.FLAT,
             bd=0,
-            pady=15,
+            pady=20,
             cursor="hand2",
-            command=command
+            command=self.pollution_action
         )
-        button.pack(fill=tk.X)
+        action_button.pack(fill=tk.X, pady=(25, 0))
         
         # Add hover effects
         def on_enter(e):
-            button.configure(bg=hover_color)
+            action_button.configure(bg="#00cc66")
             
         def on_leave(e):
-            button.configure(bg=bg_color)
+            action_button.configure(bg=self.colors['success'])
             
-        button.bind("<Enter>", on_enter)
-        button.bind("<Leave>", on_leave)
+        action_button.bind("<Enter>", on_enter)
+        action_button.bind("<Leave>", on_leave)
+        
         
     def create_footer(self, parent):
         footer_frame = tk.Frame(parent, bg=self.colors['primary'])
