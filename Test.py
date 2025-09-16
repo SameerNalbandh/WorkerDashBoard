@@ -7,20 +7,37 @@ import datetime
 
 # --- CONFIG ---
 DEVICE_ID = "SN-PI-001"
-APN = "airtelgprs.com"   # Airtel APN
-SEND_INTERVAL = 15       # seconds
-TOKEN_REFRESH_INTERVAL = 55 * 60  # refresh every 55 minutes
+APN = "airtelgprs.com"
+PDP_CONTEXT = 3   # Airtel works on context 3
+SEND_INTERVAL = 15
+TOKEN_REFRESH_INTERVAL = 55 * 60  # refresh token every 55 minutes
 
-# --- SERVICE ACCOUNT INFO (paste yours here) ---
+# --- KEEP PRIVATE KEY SEPARATE ---
+PRIVATE_KEY_PEM = """-----BEGIN PRIVATE KEY-----
+MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEA...
+... paste your full key here ...
+-----END PRIVATE KEY-----"""
+
+# --- SERVICE ACCOUNT INFO (rest of JSON) ---
 SERVICE_ACCOUNT_INFO = {
-  # paste your JSON here
+  "type": "service_account",
+  "project_id": "studio-5053909228-90740",
+  "private_key_id": "e92d42f35f7a606c3713e4af63f4e41ad3296ec5",
+  "private_key": PRIVATE_KEY_PEM,
+  "client_email": "firebase-adminsdk-fbsvc@studio-5053909228-90740.iam.gserviceaccount.com",
+  "client_id": "109877301737436156902",
+  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+  "token_uri": "https://oauth2.googleapis.com/token",
+  "auth_provider_x509_cert_url": "https://www.googleapis.com/v1/certs",
+  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/firebase-adminsdk-fbsvc%4Studio-5053909228-90740.iam.gserviceaccount.com",
+  "universe_domain": "googleapis.com"
 }
 
 PROJECT_ID = SERVICE_ACCOUNT_INFO["project_id"]
 
 # --- SERIAL PORTS ---
 ser_sensor = serial.Serial("/dev/ttyS0", baudrate=9600, timeout=1)      # ZE03 sensor
-ser_modem = serial.Serial("/dev/ttyAMA5", baudrate=115200, timeout=2)   # Quectel modem
+ser_modem = serial.Serial("/dev/ttyAMA5", baudrate=115200, timeout=2)   # EC200Y modem
 
 # --- AT Helpers ---
 def send_at(cmd, delay=1):
@@ -34,10 +51,10 @@ def init_modem():
     print("📡 Initializing modem (Airtel, PDP context 3)...")
     send_at("AT")
     send_at("ATE0")
-    send_at(f'AT+CGDCONT=3,"IP","{APN}"')   # PDP context 3
-    send_at("AT+QIACT=3", 3)                # activate PDP context 3
+    send_at(f'AT+CGDCONT={PDP_CONTEXT},"IP","{APN}"')
+    send_at(f'AT+QIACT={PDP_CONTEXT}', 3)
     send_at("AT+QIACT?")
-    send_at('AT+QHTTPCFG="contextid",3')    # use context 3 for HTTP
+    send_at(f'AT+QHTTPCFG="contextid",{PDP_CONTEXT}')
     send_at('AT+QHTTPCFG="responseheader",1')
 
 # --- Firebase Auth ---
@@ -54,13 +71,13 @@ def make_token():
 
     headers = {"kid": SERVICE_ACCOUNT_INFO["private_key_id"]}
 
-    # Fix newlines in private key
-    raw_key = SERVICE_ACCOUNT_INFO["private_key"]
-    private_key = raw_key.replace("\\n", "\n").strip()
+    private_key = SERVICE_ACCOUNT_INFO["private_key"].strip()
 
     # Debug check
-    print(private_key.splitlines()[0])
-    print(private_key.splitlines()[-1])
+    print("🔑 PEM check:")
+    print(private_key.splitlines()[0])   # BEGIN
+    print(private_key.splitlines()[1][:20])  # should start with MIIEv
+    print(private_key.splitlines()[-1])  # END
 
     signed_jwt = jwt.encode(payload, private_key, algorithm="RS256", headers=headers)
 
