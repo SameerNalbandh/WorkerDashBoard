@@ -22,11 +22,16 @@ MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEA...
 # --- SERVICE ACCOUNT INFO ---
 SERVICE_ACCOUNT_INFO = {
   "type": "service_account",
-  "project_id": PROJECT_ID,
+  "project_id": "studio-5053909228-90740",
   "private_key_id": "90f1efbb3e10ab661699642a5bd176c308861ebd",
   "private_key": PRIVATE_KEY_PEM,
-  "client_email": "firebase-adminsdk-fbsvc@studio-5053909228-90740.iam.gserviceaccount.com",
-  "token_uri": "https://oauth2.googleapis.com/token"
+   "client_email": "firebase-adminsdk-fbsvc@studio-5053909228-90740.iam.gserviceaccount.com",
+  "client_id": "109877301737436156902",
+  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+  "token_uri": "https://oauth2.googleapis.com/token",
+  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/firebase-adminsdk-fbsvc%40studio-5053909228-90740.iam.gserviceaccount.com",
+  "universe_domain": "googleapis.com"
 }
 
 # --- SERIAL PORTS ---
