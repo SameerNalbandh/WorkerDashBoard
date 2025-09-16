@@ -7,26 +7,17 @@ import datetime
 
 # --- CONFIGURATION ---
 DEVICE_ID = "SN-PI-001"
-PROJECT_ID = "studio-5053909228-90740"
-APN = "airtelgprs.com"  # Airtel APN
-
 SEND_INTERVAL = 10  # seconds
 TOKEN_REFRESH_INTERVAL = 55 * 60  # refresh every 55 minutes
+APN = "airtelgprs.com"  # Airtel APN
 
-# --- SERVICE ACCOUNT INFO ---
-SERVICE_ACCOUNT = {
-  "type": "service_account",
-  "project_id": "studio-5053909228-90740",
-  "private_key_id": "e92d42f35f7a606c3713e4af63f4e41ad3296ec5",
-  "private_key": "-----BEGIN PRIVATE KEY-----\\nMIIEvQIBADANBgkqhki...snip...\\n-----END PRIVATE KEY-----\\n",
-  "client_email": "firebase-adminsdk-fbsvc@studio-5053909228-90740.iam.gserviceaccount.com",
-  "client_id": "109877301737436156902",
-  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-  "token_uri": "https://oauth2.googleapis.com/token",
-  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/firebase-adminsdk-fbsvc%4Studio-5053909228-90740.iam.gserviceaccount.com",
-  "universe_domain": "googleapis.com"
-}
+# --- SERVICE ACCOUNT FILE ---
+SERVICE_ACCOUNT_FILE = "service-account.json"
+
+with open(SERVICE_ACCOUNT_FILE, "r") as f:
+    SERVICE_ACCOUNT = json.load(f)
+
+PROJECT_ID = SERVICE_ACCOUNT["project_id"]
 
 # --- SERIAL PORTS ---
 ser_sensor = serial.Serial("/dev/ttyS0", baudrate=9600, timeout=1)      # Winsen ZE03 sensor
@@ -64,13 +55,13 @@ def make_token():
     }
     headers = {"kid": SERVICE_ACCOUNT["private_key_id"]}
 
-    # 🔑 Fix: normalize PEM format
+    # Fix private key format
     raw_key = SERVICE_ACCOUNT["private_key"]
-    private_key = raw_key.replace("\\n", "\n").replace("\n ", "\n").strip()
+    private_key = raw_key.replace("\\n", "\n").strip()
 
-    # Debug check
-    print(private_key.splitlines()[0])   # should be BEGIN PRIVATE KEY
-    print(private_key.splitlines()[-1])  # should be END PRIVATE KEY
+    # Save for debug (optional)
+    with open("debug_key.pem", "w") as f:
+        f.write(private_key)
 
     signed_jwt = jwt.encode(payload, private_key, algorithm="RS256", headers=headers)
 
