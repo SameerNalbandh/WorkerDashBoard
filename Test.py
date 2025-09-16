@@ -1,166 +1,149 @@
-import serial
-import time
-import json
-import jwt
-import requests
-import datetime
+import serial, time, json, jwt, datetime, sys
 
-# --- CONFIG ---
-DEVICE_ID = "SN-PI-001"
-PROJECT_ID = "studio-5053909228-90740"
+# ========================
+# USER CONFIG
+# ========================
+SERIAL_PORT = "/dev/ttyQUECTEL"   # AT port of EC200 over USB
+BAUDRATE = 115200
+
 APN = "airtelgprs.com"
-PDP_CONTEXT = 3
-SEND_INTERVAL = 15
-TOKEN_REFRESH_INTERVAL = 55 * 60
+CONTEXT_ID = 3
+SSL_CTX_ID = 1
+PROJECT_ID = "studio-5053909228-90740"
 
-# --- PRIVATE KEY (PEM block) ---
-PRIVATE_KEY_PEM = """-----BEGIN PRIVATE KEY-----
-MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEA...
-... your full private key here ...
------END PRIVATE KEY-----"""
-
-# --- SERVICE ACCOUNT INFO ---
+# Fill these from your Firebase service account JSON
 SERVICE_ACCOUNT_INFO = {
-  "type": "service_account",
-  "project_id": "studio-5053909228-90740",
-  "private_key_id": "90f1efbb3e10ab661699642a5bd176c308861ebd",
-  "private_key": PRIVATE_KEY_PEM,
-   "client_email": "firebase-adminsdk-fbsvc@studio-5053909228-90740.iam.gserviceaccount.com",
-  "client_id": "109877301737436156902",
-  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-  "token_uri": "https://oauth2.googleapis.com/token",
-  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/firebase-adminsdk-fbsvc%40studio-5053909228-90740.iam.gserviceaccount.com",
-  "universe_domain": "googleapis.com"
+    "client_email": "firebase-adminsdk-fbsvc@studio-5053909228-90740.iam.gserviceaccount.com",
+    "private_key": """-----BEGIN PRIVATE KEY-----
+MIIEvQIBADANBgkqhkiG...snipped...
+-----END PRIVATE KEY-----"""
 }
 
-# --- SERIAL PORTS ---
-ser_sensor = serial.Serial("/dev/ttyS0", baudrate=9600, timeout=1)      # Winsen ZE03
-ser_modem = serial.Serial("/dev/ttyAMA5", baudrate=115200, timeout=2)   # Quectel
+DEVICE_ID = "SN-PI-001"
+DEVICE_NAME = "Pi Sensor - Main Room"
 
-# --- AT Helpers ---
-def send_at(cmd, delay=1):
-    ser_modem.write((cmd + "\r\n").encode())
-    time.sleep(delay)
-    resp = ser_modem.read_all().decode(errors="ignore")
-    print(f"→ {cmd}\n← {resp}")
-    return resp
+# ========================
+# SERIAL HELPERS
+# ========================
+ser = serial.Serial(SERIAL_PORT, BAUDRATE, timeout=2)
 
-def init_modem():
-    print("📡 Initializing modem (reboot-proof init)...")
-    send_at("AT")
-    send_at("ATE0")
-    send_at(f'AT+CGDCONT={PDP_CONTEXT},"IP","{APN}"')
-    send_at(f'AT+QIACT={PDP_CONTEXT}', 3)
-    send_at("AT+QIACT?")
+def send_at(cmd, expect="OK", timeout=5, delay=0.2):
+    """Send AT command and wait for response"""
+    ser.flushInput()
+    print(f"→ {cmd}")
+    ser.write((cmd + "\r").encode())
+    t_end = time.time() + timeout
+    buffer = b""
+    while time.time() < t_end:
+        line = ser.readline()
+        if line:
+            line = line.decode(errors="ignore").strip()
+            print(f"← {line}")
+            buffer += line.encode() + b"\n"
+            if expect in line:
+                return True, buffer.decode()
+        time.sleep(0.05)
+    return False, buffer.decode()
 
-    # HTTP config (must set every boot)
-    send_at(f'AT+QHTTPCFG="contextid",{PDP_CONTEXT}')
-    send_at('AT+QHTTPCFG="responseheader",1')
-    send_at('AT+QHTTPCFG="sslctxid",1')
+def wait_connect(timeout=5):
+    """Wait until modem replies CONNECT"""
+    t_end = time.time() + timeout
+    while time.time() < t_end:
+        line = ser.readline()
+        if line:
+            line = line.decode(errors="ignore").strip()
+            print(f"← {line}")
+            if "CONNECT" in line:
+                return True
+    return False
 
-    # SSL config (already persistent, but reapply defensively)
-    send_at('AT+QSSLCFG="sslversion",1,4')
-    send_at('AT+QSSLCFG="cacert",1,"UFS:cacert.pem"')
-
-    # Self-test Google GET
-    print("🌐 Testing HTTPS connectivity...")
-    url = "https://www.google.com"
-    send_at(f'AT+QHTTPURL={len(url)},80')
-    time.sleep(0.5)
-    ser_modem.write(url.encode())
-    send_at("AT+QHTTPGET=80", 5)
-    resp = send_at("AT+QHTTPREAD", 3)
-    print("🔎 HTTPS Test Response:", resp[:200])  # print first 200 chars
-
-# --- Firebase Auth ---
-def make_token():
-    iat = int(time.time())
-    exp = iat + 3600
+# ========================
+# FIREBASE AUTH (JWT)
+# ========================
+def make_jwt():
+    now = int(time.time())
     payload = {
         "iss": SERVICE_ACCOUNT_INFO["client_email"],
         "scope": "https://www.googleapis.com/auth/datastore",
         "aud": "https://oauth2.googleapis.com/token",
-        "iat": iat,
-        "exp": exp
+        "iat": now,
+        "exp": now + 3600,
     }
-    headers = {"kid": SERVICE_ACCOUNT_INFO["private_key_id"]}
-    private_key = SERVICE_ACCOUNT_INFO["private_key"].strip()
+    token = jwt.encode(payload, SERVICE_ACCOUNT_INFO["private_key"], algorithm="RS256")
+    return token if isinstance(token, str) else token.decode()
 
-    signed_jwt = jwt.encode(payload, private_key, algorithm="RS256", headers=headers)
+# ========================
+# INIT MODEM
+# ========================
+def init_modem():
+    print("📡 Initializing modem (reboot-proof init)...")
+    send_at("AT")
+    send_at("ATE0")
+    send_at(f'AT+CGDCONT={CONTEXT_ID},"IP","{APN}"')
+    send_at(f"AT+QIACT={CONTEXT_ID}", "OK", timeout=10)
+    send_at("AT+QIACT?")
+    send_at(f'AT+QHTTPCFG="contextid",{CONTEXT_ID}')
+    send_at('AT+QHTTPCFG="responseheader",1')
+    send_at(f'AT+QHTTPCFG="sslctxid",{SSL_CTX_ID}')
+    send_at(f'AT+QSSLCFG="sslversion",{SSL_CTX_ID},4')
+    send_at(f'AT+QSSLCFG="cacert",{SSL_CTX_ID},"UFS:cacert.pem"')
 
-    resp = requests.post("https://oauth2.googleapis.com/token", data={
-        "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
-        "assertion": signed_jwt
-    })
-
-    if resp.status_code == 200:
-        token = resp.json()["access_token"]
-        print("✅ Got OAuth2 token")
-        return token
-    else:
-        print("❌ Token error:", resp.text)
-        return None
-
-# --- Sensor ---
-def read_co_sensor():
-    req = bytearray([0xFF,0x01,0x86,0,0,0,0,0,0x79])
-    ser_sensor.write(req)
-    resp = ser_sensor.read(9)
-    if len(resp)==9 and resp[0]==0xFF and resp[1]==0x86:
-        co = (resp[2]<<8)|resp[3]
-        print(f"📟 CO: {co} ppm")
-        return co
-    print("⚠️ Sensor error")
-    return None
-
-# --- Firestore Post ---
-def post_firestore(co_level, token):
+# ========================
+# FIRESTORE POST
+# ========================
+def post_firestore(token, data):
     url = f"https://firestore.googleapis.com/v1/projects/{PROJECT_ID}/databases/(default)/documents/devices/{DEVICE_ID}"
 
-    body = {
+    # Build Firestore payload
+    payload = {
         "fields": {
             "id": {"stringValue": DEVICE_ID},
-            "coLevel": {"integerValue": co_level},
-            "timestamp": {"timestampValue": datetime.datetime.utcnow().isoformat("T")+"Z"}
+            "name": {"stringValue": DEVICE_NAME},
+            "status": {"stringValue": data["status"]},
+            "coLevel": {"doubleValue": data["coLevel"]},
+            "timestamp": {"timestampValue": datetime.datetime.utcnow().isoformat("T") + "Z"},
         }
     }
-    data = json.dumps(body)
+    body = json.dumps(payload)
+    body_bytes = body.encode("utf-8")
+    body_len = len(body_bytes)
 
-    # Important: end headers with \r\n\r\n
-    headers = f"Authorization: Bearer {token}\r\nContent-Type: application/json\r\n\r\n"
-    payload = headers + data
-    length = len(payload.encode("utf-8"))
+    # 1) Set URL
+    send_at(f"AT+QHTTPURL={len(url)},80")
+    if not wait_connect():
+        print("❌ No CONNECT after URL")
+        return
+    ser.write(url.encode() + b"\x1A")   # Ctrl+Z
 
-    # Send URL
-    send_at(f'AT+QHTTPURL={len(url)},80')
-    time.sleep(0.5)
-    ser_modem.write(url.encode())
+    # 2) POST data
+    send_at(f"AT+QHTTPPOST={body_len},80,80")
+    if not wait_connect():
+        print("❌ No CONNECT after POST")
+        return
+    ser.write(body_bytes + b"\x1A")  # Ctrl+Z
 
-    # Send body
-    send_at(f'AT+QHTTPPOST={length},80,80')
-    time.sleep(0.5)
-    ser_modem.write(payload.encode("utf-8"))
+    # 3) Read response
+    ok, resp = send_at("AT+QHTTPREAD", "OK", timeout=10)
+    print("🌍 Firestore response:")
+    print(resp)
 
-    # Read response
-    resp = send_at("AT+QHTTPREAD", 3)
-    print("🌍 Firestore response:", resp)
-
-# --- MAIN ---
-if __name__ == "__main__":
+# ========================
+# MAIN LOOP
+# ========================
+def main():
     init_modem()
-    token = make_token()
-    if not token:
-        exit()
-
-    token_time = time.time()
+    token = make_jwt()
+    print("✅ Got OAuth2 token")
 
     while True:
-        if time.time() - token_time > TOKEN_REFRESH_INTERVAL:
-            token = make_token()
-            token_time = time.time()
+        co_level = round(1 + 5 * time.time() % 10, 1)  # dummy CO
+        status = "Normal" if co_level < 8 else "Warning" if co_level < 12 else "Critical"
 
-        co = read_co_sensor()
-        if co is not None and token:
-            post_firestore(co, token)
-        time.sleep(SEND_INTERVAL)
+        data = {"coLevel": co_level, "status": status}
+        print(f"📟 CO: {co_level} ppm")
+
+        post_firestore(token, data)
+        time.sleep(15)
+
+if __name__ == "__main__":
+    main()
