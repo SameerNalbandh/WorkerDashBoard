@@ -41,10 +41,10 @@ import subprocess
 # =============================================================================
 
 # Mining Safety Dashboard Python file path
-MINING_SAFETY_SCRIPT = r"c:\Users\acer\Downloads\mining_safety_dashboard.py"
+MINING_SAFETY_SCRIPT = r"/home/sam/SIH/WorkerDashBoardWithFireBase.py"
 
 # Pollution Control Agent Python file path  
-POLLUTION_CONTROL_SCRIPT = r"c:\Users\acer\Downloads\pollution_control_agent.py"
+POLLUTION_CONTROL_SCRIPT = r"/home/sam/SIH/PUCDashboard.py"
 
 # =============================================================================
 
