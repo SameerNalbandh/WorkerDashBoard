@@ -506,13 +506,25 @@ class FirebaseUploader:
     def _initialize_firebase(self):
         """Initialize Firebase connection."""
         try:
+            print("🔄 Initializing Firebase connection...")
+            
+            # Test network connectivity first
+            import socket
+            try:
+                socket.gethostbyname('firestore.googleapis.com')
+                print("✅ DNS resolution successful")
+            except Exception as dns_e:
+                print(f"❌ DNS resolution failed: {dns_e}")
+                raise Exception(f"Network connectivity issue: {dns_e}")
+            
             cred = credentials.Certificate(FIREBASE_SERVICE_ACCOUNT_INFO)
             firebase_admin.initialize_app(cred)
             self.db = firestore.client()
             self.initialized = True
             print("✅ Firebase initialized successfully")
         except Exception as e:
-            print(f"❌ Firebase initialization failed: {e}")
+            print(f"❌ Firebase initialization failed: {type(e).__name__}: {str(e)}")
+            print(f"❌ Full error details: {repr(e)}")
             self.initialized = False
     
     def determine_status(self, co_level):
@@ -549,8 +561,14 @@ class FirebaseUploader:
                 "lastUpdate": datetime.utcnow().isoformat() + "Z"
             }
             
+            print(f"🔄 Attempting Firebase upload: PPM={ppm_value}, Status={status}")
+            start_time = time.time()
+            
             device_ref = self.db.collection("devices").document(DEVICE_ID)
             device_ref.set(payload, merge=True)
+            
+            upload_time = time.time() - start_time
+            print(f"✅ Firebase upload successful in {upload_time:.2f} seconds")
             
             self.upload_count += 1
             self.last_upload_time = time.time()
@@ -558,7 +576,21 @@ class FirebaseUploader:
             
         except Exception as e:
             self.failed_uploads += 1
-            return False, f"Upload failed: {str(e)}"
+            error_type = type(e).__name__
+            error_msg = str(e)
+            
+            # Check if it's a timeout-related error
+            if "timeout" in error_msg.lower() or "timed out" in error_msg.lower():
+                print(f"⏰ Firebase upload timed out: {error_msg}")
+            elif "connection" in error_msg.lower():
+                print(f"🌐 Firebase connection error: {error_msg}")
+            elif "permission" in error_msg.lower() or "forbidden" in error_msg.lower():
+                print(f"🔒 Firebase permission error: {error_msg}")
+            else:
+                print(f"❌ Firebase upload error ({error_type}): {error_msg}")
+            
+            print(f"❌ Full error details: {repr(e)}")
+            return False, f"Upload failed: {error_type}: {error_msg}"
     
     def get_stats(self):
         """Get upload statistics."""
@@ -1128,14 +1160,20 @@ class MinerMonitorApp(QWidget):
             return
         
         try:
+            print(f"🔄 Starting Firebase upload thread for PPM: {ppm_value}")
             success, message = self.firebase_uploader.upload_ppm_data(ppm_value)
             if success:
                 stats = self.firebase_uploader.get_stats()
                 self.signals.firebase_status.emit(f"📡 Firebase: ✅ Uploaded ({stats['upload_count']})")
+                print(f"✅ Firebase upload completed successfully")
             else:
-                self.signals.firebase_status.emit(f"📡 Firebase: ❌ Failed - {message[:30]}...")
+                self.signals.firebase_status.emit(f"📡 Firebase: ❌ Failed - {message[:50]}...")
+                print(f"❌ Firebase upload failed: {message}")
         except Exception as e:
+            error_msg = f"Firebase upload thread error: {type(e).__name__}: {str(e)}"
             self.signals.firebase_status.emit(f"📡 Firebase: ❌ Error - {str(e)[:30]}...")
+            print(f"❌ {error_msg}")
+            print(f"❌ Full error details: {repr(e)}")
 
     def ze03_worker(self):
         while True:
