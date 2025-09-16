@@ -41,10 +41,11 @@ import subprocess
 # =============================================================================
 
 # Mining Safety Dashboard Python file path
-MINING_SAFETY_SCRIPT = r"/home/sam/SIH/WorkerDashBoardWithFireBase.py"
+# Use forward slashes or double backslashes to avoid Unicode escape errors
+MINING_SAFETY_SCRIPT = "c:/Users/acer/Downloads/mining_safety_dashboard.py"
 
 # Pollution Control Agent Python file path  
-POLLUTION_CONTROL_SCRIPT = r"/home/sam/SIH/PUCDashboard.py"
+POLLUTION_CONTROL_SCRIPT = "c:/Users/acer/Downloads/pollution_control_agent.py"
 
 # =============================================================================
 
