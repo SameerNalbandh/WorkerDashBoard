@@ -1,4 +1,3 @@
-
 #!/usr/bin/env python3
 """
 WorkerDashboard.py (Miner Safety Monitor)
@@ -26,9 +25,6 @@ import traceback
 from datetime import datetime
 import glob
 import json
-import requests
-import urllib3
-from urllib3.exceptions import InsecureRequestWarning
 
 import serial
 from serial import SerialException
@@ -72,7 +68,7 @@ ALERT_PHONE = "+911234567890"
 
 # Contact list for dropdown selection
 CONTACTS = {
-    "sameer": "+916352925852",
+    "sameer": "+919825186687",
     "ramsha": "+918179489703",
     "surya": "+917974560541",
     "anupam": "+917905030839",
@@ -80,19 +76,19 @@ CONTACTS = {
     "kartika": "+919871390413"
 }
 
-# Firebase configuration - SERVICE ACCOUNT INFO ON TOP
+# Firebase configuration
 FIREBASE_SERVICE_ACCOUNT_INFO = {
-    "type": "service_account",
-    "project_id": "studio-5053909228-90740",
-    "private_key_id": "90f1efbb3e10ab661699642a5bd176c308861ebd",
-    "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCw+OI3gAxqXs9Q\nLJpvAprY1iS7dHr6v/G0AEzRlcWNyKJuF2gho8ZRGN+BYmJZRvm3DRzqyXOoS6X/\nIuZMS/xTXzVNKPtGHdS/KE5sdlE+zvBsqqsrQXbbvyglA4N+zTsOrpDgDx0Q7+A+\nWAcwdYBufSQsNLsJ+CCCM/1k+FPTpVvo4EfsB0yhD0pROpom9w3k28qqbgC8eS/x\np6LPaJmoIyzvo8d0XdY89ViSgVt94uu5dLTl0z8ULzB4YxBoFYLfpaHlBNzNGpnz\nRWk7UXAjEbuqeRlbGrbvIQj1AAPB7he+77ibOefXJIC1+IR7lnqOaU99uqHaHa5G\n3fcmcIV/AgMBAAECggEAFygh9bAwL7UDPJLxjEgTef8fZFX8B5aZKnwFkUEfTgus\nUWqHqiszdoYiLNxyUQtL/qtdFs3Qb/uiF236I46n0EL7hwKvSn/5yB+ej2u1+tl6\nNUXpyumwg1WSi7FXgf6Z1TR7aY4guAgjWBUNr8YYTZzbYFtwBABvRIpIBG/IDD/1\neDkxNgkRgErmNcAog3GxpFa+EbbYyldd/W1pyeNfBrfMhw8BMwuW+gtN5yRIgczd\nkqdOA/Et7OkG1iMLCCezv3nJx0s9TNj78vCINXajeDP3j1AXD7VeNdG9r/x3Sww0\n5eHdVf2IWKHdQljsbatf+hDJ8IN1R43RGRHFDI+MtQKBgQDrWGjs1IdOGdIHehDI\nZEhaHVcu23coxzMaspsQn+1nNmbnzJh/qBJK+uY95R0BW3N8JhCbvwe+DpzwZUTX\n/4Cu1rzO00B4Zfe/oTrbfj/nCfe3lp1rafLdr6oMRQJ1pDoi7hKRTu6/H8uZxCwx\noh15o2XfePSo/R5SUKZq6q753QKBgQDAgPuehZKbLvBJUGIg0l0c45UxxhIZSN72\nbgKMkG/1y9mygXdtpkTyJ9NAZcU0O/pX3089whyShw7RPhB/gt/Zt2Vr0nbkcAYQ\n8BiFK8fvrQmaqPtTrJJZjF3C8is4mmlmvsfFyglDuk+yJOKdfiy54sQmcCuzXcc7\nZWgRyJjdCwKBgEOWN0PUYSsvxR56krlJ+3FNvczqIBVo56dCJcAnfaFHgVQOcLkw\nhlhcJ6Uc2DCcl9TOhbSEru+I+M8c9iFl8gnEB6MKDhjFh9nTrrh8UFPEjAyAR6Mi\nYSoDGb2+T8+DI2MGpfRvC6d9tRXqvZpfaUGWiFoePX0OfBe9q51G2otNAoGAIVj2\nvcJT4FAkTf7/0MHAYZXHLaUrU3f9L+FkzabjzkevAa5N2w/Xl79waBJ5NBBD0N8d\nYgxzWKrO1U6UGxK35oZPqnr+H5qMYnjFNqSb8RgftswZJaiafarEP1YmSJrvMV5R\nSyExs6rdzXV4UGIgK19uLV53I45WSiLKAXKnkHsCgYEAt1eKl1q18F2knTe7Jape\nwK9VVLm1FPOe4bJNaBGyLjBDL7WECjOZAcQgRsFFyqa6fQ/FzEJsvihVmtwWDR6t\n08ftHRqkeVLhcoN4m+h7cXtRMMaqVOFk96pepeqC04Lmem90I5j+LRKblCEe5cN6\nPLxOHmFS4JHItXVr2PPu6TY=\n-----END PRIVATE KEY-----\n",
-    "client_email": "firebase-adminsdk-fbsvc@studio-5053909228-90740.iam.gserviceaccount.com",
-    "client_id": "109877301737436156902",
-    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-    "token_uri": "https://oauth2.googleapis.com/token",
-    "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-    "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/firebase-adminsdk-fbsvc%40studio-5053909228-90740.iam.gserviceaccount.com",
-    "universe_domain": "googleapis.com"
+  "type": "service_account",
+  "project_id": "studio-5053909228-90740",
+  "private_key_id": "90f1efbb3e10ab661699642a5bd176c308861ebd",
+  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCw+OI3gAxqXs9Q\nLJpvAprY1iS7dHr6v/G0AEzRlcWNyKJuF2gho8ZRGN+BYmJZRvm3DRzqyXOoS6X/\nIuZMS/xTXzVNKPtGHdS/KE5sdlE+zvBsqqsrQXbbvyglA4N+zTsOrpDgDx0Q7+A+\nWAcwdYBufSQsNLsJ+CCCM/1k+FPTpVvo4EfsB0yhD0pROpom9w3k28qqbgC8eS/x\np6LPaJmoIyzvo8d0XdY89ViSgVt94uu5dLTl0z8ULzB4YxBoFYLfpaHlBNzNGpnz\nRWk7UXAjEbuqeRlbGrbvIQj1AAPB7he+77ibOefXJIC1+IR7lnqOaU99uqHaHa5G\n3fcmcIV/AgMBAAECggEAFygh9bAwL7UDPJLxjEgTef8fZFX8B5aZKnwFkUEfTgus\nUWqHqiszdoYiLNxyUQtL/qtdFs3Qb/uiF236I46n0EL7hwKvSn/5yB+ej2u1+tl6\nNUXpyumwg1WSi7FXgf6Z1TR7aY4guAgjWBUNr8YYTZzbYFtwBABvRIpIBG/IDD/1\neDkxNgkRgErmNcAog3GxpFa+EbbYyldd/W1pyeNfBrfMhw8BMwuW+gtN5yRIgczd\nkqdOA/Et7OkG1iMLCCezv3nJx0s9TNj78vCINXajeDP3j1AXD7VeNdG9r/x3Sww0\n5eHdVf2IWKHdQljsbatf+hDJ8IN1R43RGRHFDI+MtQKBgQDrWGjs1IdOGdIHehDI\nZEhaHVcu23coxzMaspsQn+1nNmbnzJh/qBJK+uY95R0BW3N8JhCbvwe+DpzwZUTX\n/4Cu1rzO00B4Zfe/oTrbfj/nCfe3lp1rafLdr6oMRQJ1pDoi7hKRTu6/H8uZxCwx\noh15o2XfePSo/R5SUKZq6q753QKBgQDAgPuehZKbLvBJUGIg0l0c45UxxhIZSN72\nbgKMkG/1y9mygXdtpkTyJ9NAZcU0O/pX3089whyShw7RPhB/gt/Zt2Vr0nbkcAYQ\n8BiFK8fvrQmaqPtTrJJZjF3C8is4mmlmvsfFyglDuk+yJOKdfiy54sQmcCuzXcc7\nZWgRyJjdCwKBgEOWN0PUYSsvxR56krlJ+3FNvczqIBVo56dCJcAnfaFHgVQOcLkw\nhlhcJ6Uc2DCcl9TOhbSEru+I+M8c9iFl8gnEB6MKDhjFh9nTrrh8UFPEjAyAR6Mi\nYSoDGb2+T8+DI2MGpfRvC6d9tRXqvZpfaUGWiFoePX0OfBe9q51G2otNAoGAIVj2\nvcJT4FAkTf7/0MHAYZXHLaUrU3f9L+FkzabjzkevAa5N2w/Xl79waBJ5NBBD0N8d\nYgxzWKrO1U6UGxK35oZPqnr+H5qMYnjFNqSb8RgftswZJaiafarEP1YmSJrvMV5R\nSyExs6rdzXV4UGIgK19uLV53I45WSiLKAXKnkHsCgYEAt1eKl1q18F2knTe7Jape\nwK9VVLm1FPOe4bJNaBGyLjBDL7WECjOZAcQgRsFFyqa6fQ/FzEJsvihVmtwWDR6t\n08ftHRqkeVLhcoN4m+h7cXtRMMaqVOFk96pepeqC04Lmem90I5j+LRKblCEe5cN6\nPLxOHmFS4JHItXVr2PPu6TY=\n-----END PRIVATE KEY-----\n",
+  "client_email": "firebase-adminsdk-fbsvc@studio-5053909228-90740.iam.gserviceaccount.com",
+  "client_id": "109877301737436156902",
+  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+  "token_uri": "https://oauth2.googleapis.com/token",
+  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/firebase-adminsdk-fbsvc%40studio-5053909228-90740.iam.gserviceaccount.com",
+  "universe_domain": "googleapis.com"
 }
 
 # Device configuration for Firebase
@@ -102,8 +98,8 @@ LOCATION_NAME = "Main Room"
 LOCATION_LAT = 40.7160
 LOCATION_LNG = -74.0040
 
-# Upload interval in seconds (upload every 30 seconds)
-UPLOAD_INTERVAL = 30
+# Upload interval in seconds (upload every 1 second for faster updates)
+UPLOAD_INTERVAL = 1
 
 # -----------------------------
 # Utilities
@@ -194,74 +190,7 @@ class SerialReaderThread(threading.Thread):
             pass
 
 # -----------------------------
-# Web Data Transmitter (HTTPS)
-# -----------------------------
-class WebDataTransmitter:
-    def __init__(self):
-        self.session = requests.Session()
-        self.session.verify = True  # Enable SSL verification
-        # Disable SSL warnings for development
-        urllib3.disable_warnings(InsecureRequestWarning)
-        self.last_upload_time = 0
-        self.upload_count = 0
-        self.failed_uploads = 0
-        
-    def send_alert_via_web(self, alert_type, message, phone_number=None):
-        """Send alert via web API instead of SMS modem"""
-        try:
-            # Prepare alert data
-            alert_data = {
-                "device_id": DEVICE_ID,
-                "device_name": DEVICE_NAME,
-                "alert_type": alert_type,  # "SOS" or "CUSTOM"
-                "message": message,
-                "phone_number": phone_number,
-                "timestamp": datetime.utcnow().isoformat() + "Z",
-                "location": {
-                    "name": LOCATION_NAME,
-                    "lat": LOCATION_LAT,
-                    "lng": LOCATION_LNG
-                }
-            }
-            
-            # Send to web API endpoint (you can configure this URL)
-            web_api_url = "https://your-web-api-endpoint.com/alerts"
-            
-            # For now, we'll use Firebase to store alerts
-            if FIREBASE_AVAILABLE:
-                try:
-                    cred = credentials.Certificate(FIREBASE_SERVICE_ACCOUNT_INFO)
-                    firebase_admin.initialize_app(cred, name=f"alert_{int(time.time())}")
-                    db = firestore.client()
-                    
-                    # Store alert in Firebase
-                    alert_ref = db.collection("alerts").document()
-                    alert_ref.set(alert_data)
-                    
-                    self.upload_count += 1
-                    return True, "Alert sent via web successfully"
-                except Exception as e:
-                    self.failed_uploads += 1
-                    return False, f"Web alert failed: {str(e)}"
-            else:
-                # Fallback: just log the alert
-                print(f"ALERT: {alert_type} - {message}")
-                return True, "Alert logged (no web connection)"
-                
-        except Exception as e:
-            self.failed_uploads += 1
-            return False, f"Web transmission error: {str(e)}"
-    
-    def get_stats(self):
-        """Get transmission statistics"""
-        return {
-            "upload_count": self.upload_count,
-            "failed_uploads": self.failed_uploads,
-            "last_upload": self.last_upload_time
-        }
-
-# -----------------------------
-# Modem controller (EC200U) - DEPRECATED
+# Modem controller (EC200U)
 # -----------------------------
 class ModemController:
     def __init__(self, dev, baud=MODEM_BAUD, timeout=2):
@@ -311,13 +240,13 @@ class ModemController:
         except Exception:
             return None
 
-    def wait_for_registration(self, max_wait_seconds=30):
+    def wait_for_registration(self, max_wait_seconds=15):
         deadline = time.time() + max_wait_seconds
         while time.time() < deadline:
             try:
-                # Try LTE, PS and CS registration queries
+                # Try LTE, PS and CS registration queries with faster checks
                 for cmd in ("AT+CEREG?", "AT+CGREG?", "AT+CREG?"):
-                    resp = self.send_at(cmd, wait_for=b"OK", timeout=2)
+                    resp = self.send_at(cmd, wait_for=b"OK", timeout=1)  # Reduced timeout
                     s = resp.decode(errors="ignore")
                     for line in s.splitlines():
                         if ":" in line and ("CEREG" in line or "CGREG" in line or "CREG" in line):
@@ -329,7 +258,7 @@ class ModemController:
                                 pass
             except Exception:
                 pass
-            time.sleep(1.0)
+            time.sleep(0.5)  # Reduced from 1.0
         return False
 
     def initialize_for_sms(self):
@@ -344,7 +273,7 @@ class ModemController:
             for cmd, to in steps:
                 _ = self.send_at(cmd, wait_for=b"OK", timeout=to)
 
-            if not self.wait_for_registration(max_wait_seconds=45):
+            if not self.wait_for_registration(max_wait_seconds=20):
                 return False, "Not registered to network"
 
             _ = self.send_at("AT+CSCS=\"GSM\"", wait_for=b"OK", timeout=2)
@@ -357,25 +286,26 @@ class ModemController:
         except Exception as e:
             return False, str(e)
 
-    def send_sms_textmode(self, number, text, timeout=10):
+    def send_sms_textmode(self, number, text, timeout=5):
         with self.lock:
             ser = self._open()
             try:
+                # Optimized SMS sending with reduced delays
                 ser.write(b"ATE0\r")
-                time.sleep(0.1)
+                time.sleep(0.05)  # Reduced from 0.1
                 _ = ser.read(256)
                 ser.write(b"AT+CMGF=1\r")
-                time.sleep(0.2)
+                time.sleep(0.1)   # Reduced from 0.2
                 _ = ser.read(512)
                 ser.write(b"AT+CSCS=\"GSM\"\r")
-                time.sleep(0.2)
+                time.sleep(0.1)   # Reduced from 0.2
                 _ = ser.read(256)
 
                 cmd = f'AT+CMGS="{number}"\r'.encode()
                 ser.write(cmd)
 
-                # wait for '>' prompt
-                deadline = time.time() + 5
+                # wait for '>' prompt with reduced timeout
+                deadline = time.time() + 3  # Reduced from 5
                 buf = bytearray()
                 while time.time() < deadline:
                     chunk = ser.read(256)
@@ -384,11 +314,11 @@ class ModemController:
                         if b">" in buf:
                             break
                     else:
-                        time.sleep(0.05)
+                        time.sleep(0.02)  # Reduced from 0.05
 
                 ser.write(text.encode() + b"\x1A")
 
-                # wait for result
+                # wait for result with reduced timeout
                 resp = bytearray()
                 deadline = time.time() + timeout
                 while time.time() < deadline:
@@ -398,7 +328,7 @@ class ModemController:
                         if b"+CMGS" in resp or b"OK" in resp or b"ERROR" in resp or b"+CMS ERROR" in resp:
                             break
                     else:
-                        time.sleep(0.05)
+                        time.sleep(0.02)  # Reduced from 0.05
 
                 s = resp.decode(errors="ignore")
                 if "ERROR" in s or "+CMS ERROR" in s:
@@ -654,10 +584,10 @@ class AppSignals(QObject):
 # GUI App
 # -----------------------------
 class MinerMonitorApp(QWidget):
-    def __init__(self, ze03_q, web_transmitter, message_ids=None):
+    def __init__(self, ze03_q, modem_ctrl, message_ids=None):
         super().__init__()
         self.ze03_q = ze03_q
-        self.web_transmitter = web_transmitter
+        self.modem_ctrl = modem_ctrl
         self.signals = AppSignals()
         self.setWindowTitle(APP_TITLE)
         self.resize(WINDOW_WIDTH, WINDOW_HEIGHT)
@@ -755,7 +685,7 @@ class MinerMonitorApp(QWidget):
             }
         """)
 
-        self.status_label = QLabel("Web: -- | Connection: --")
+        self.status_label = QLabel("Modem: -- | Signal: --")
         self.status_label.setFont(self.small_font)
         self.status_label.setAlignment(Qt.AlignCenter)
         self.status_label.setStyleSheet("""
@@ -780,12 +710,11 @@ class MinerMonitorApp(QWidget):
             }
         """)
 
-        # Web connection status bar
-        self.connection_bar = QProgressBar()
-        self.connection_bar.setRange(0, 100)
-        self.connection_bar.setFormat("Web Connection: %p%")
-        self.connection_bar.setValue(0)
-        self.connection_bar.setStyleSheet("""
+        # Signal strength bar with safety colors
+        self.signal_bar = QProgressBar()
+        self.signal_bar.setRange(0, 31)
+        self.signal_bar.setFormat("Signal: %v")
+        self.signal_bar.setStyleSheet("""
             QProgressBar {
                 border: 2px solid #ff6b35;
                 border-radius: 8px;
@@ -943,7 +872,7 @@ class MinerMonitorApp(QWidget):
         v.addWidget(self.last_update_label)
         v.addWidget(self.status_label)
         v.addWidget(self.firebase_status_label)
-        v.addWidget(self.connection_bar)
+        v.addWidget(self.signal_bar)
         v.addWidget(self.busy_bar)
         v.addLayout(btn_row)
         v.addLayout(contact_row)
@@ -952,17 +881,17 @@ class MinerMonitorApp(QWidget):
 
         # signals
         self.signals.ppm_update.connect(self.update_ppm)
-        self.signals.modem_status.connect(self.update_web_status)
-        self.signals.sms_result.connect(self.on_web_alert_result)
-        self.signals.gsm_signal.connect(self.on_web_connection)
+        self.signals.modem_status.connect(self.update_modem_status)
+        self.signals.sms_result.connect(self.on_sms_result)
+        self.signals.gsm_signal.connect(self.on_gsm_signal)
         self.signals.firebase_status.connect(self.update_firebase_status)
 
         self.ze03_parser = ZE03Parser()
         self.reader_thread = threading.Thread(target=self.ze03_worker, daemon=True)
         self.reader_thread.start()
 
-        # Initialize web connection in background
-        threading.Thread(target=self.web_init_worker, daemon=True).start()
+        # Initialize modem in background
+        threading.Thread(target=self.modem_init_worker, daemon=True).start()
 
         # Initialize Firebase status
         if self.firebase_uploader.initialized:
@@ -982,20 +911,15 @@ class MinerMonitorApp(QWidget):
         name = self.contact_dropdown.currentText()
         self.alert_phone = self.contacts.get(name, ALERT_PHONE)
         self.contact_label.setText(self.alert_phone)
-    def web_init_worker(self):
-        self.signals.modem_status.emit("Web: Initializing...")
-        try:
-            # Test web connectivity
-            response = requests.get("https://www.google.com", timeout=5)
-            if response.status_code == 200:
-                self.signals.gsm_signal.emit(100)  # Full connection
-                self.signals.modem_status.emit("Web: Online")
-            else:
-                self.signals.gsm_signal.emit(50)  # Partial connection
-                self.signals.modem_status.emit("Web: Limited")
-        except Exception as e:
-            self.signals.gsm_signal.emit(0)  # No connection
-            self.signals.modem_status.emit(f"Web: Offline - {str(e)[:30]}")
+    def modem_init_worker(self):
+        self.signals.modem_status.emit("Modem: Initializing...")
+        ok, msg = self.modem_ctrl.initialize_for_sms()
+        if ok:
+            rssi = self.modem_ctrl.get_signal_quality()
+            self.signals.gsm_signal.emit(rssi)
+            self.signals.modem_status.emit("Modem: Online")
+        else:
+            self.signals.modem_status.emit(f"Modem: Init failed - {msg}")
     # Enhanced on-screen keyboard dialog for SMS text with safety styling
     def open_sms_keyboard(self):
         dialog = QDialog(self)
@@ -1185,16 +1109,15 @@ class MinerMonitorApp(QWidget):
             threading.Thread(target=self._upload_to_firebase, args=(ppm,), daemon=True).start()
             self._last_upload_time = current_time
 
-    def update_web_status(self, text):
+    def update_modem_status(self, text):
         self.status_label.setText(text)
 
-    def on_web_connection(self, connection_quality):
-        if connection_quality is None:
-            self.status_label.setText("Web: Offline | Connection: ?")
-            self.connection_bar.setValue(0)
+    def on_gsm_signal(self, val):
+        if val is None:
+            self.status_label.setText("Modem: Online | Signal: ?")
         else:
-            self.connection_bar.setValue(connection_quality)
-            self.status_label.setText(f"Web: Online | Connection: {connection_quality}%")
+            self.signal_bar.setValue(val)
+            self.status_label.setText(f"Modem: Online | Signal: {val}")
 
     def update_firebase_status(self, text):
         self.firebase_status_label.setText(text)
@@ -1233,21 +1156,18 @@ class MinerMonitorApp(QWidget):
                 time.sleep(1)
 
     def periodic_tasks(self):
-        threading.Thread(target=self.check_web_connection, daemon=True).start()
+        threading.Thread(target=self.check_modem_and_signal, daemon=True).start()
 
-    def check_web_connection(self):
+    def check_modem_and_signal(self):
         try:
-            # Quick connectivity test
-            response = requests.get("https://www.google.com", timeout=3)
-            if response.status_code == 200:
-                self.signals.gsm_signal.emit(100)
-                self.signals.modem_status.emit("Web: Online")
-            else:
-                self.signals.gsm_signal.emit(50)
-                self.signals.modem_status.emit("Web: Limited")
+            alive = self.modem_ctrl.is_alive()
+            if not alive:
+                self.signals.modem_status.emit("Modem: Offline")
+                return
+            rssi = self.modem_ctrl.get_signal_quality()
+            self.signals.gsm_signal.emit(rssi)
         except Exception as e:
-            self.signals.gsm_signal.emit(0)
-            self.signals.modem_status.emit(f"Web: Offline - {str(e)[:20]}")
+            self.signals.modem_status.emit(f"Modem check error: {e}")
 
     def set_busy(self, busy, text=""):
         def _set():
@@ -1298,16 +1218,16 @@ class MinerMonitorApp(QWidget):
         self.send_button.setDisabled(True)
         
         try:
-            # Update loading message
-            self.loading_dialog.update_message("🚨 Sending via web...")
+            number = self.alert_phone
+            if not self.modem_ctrl.is_alive():
+                self.signals.sms_result.emit(False, "Modem not responding to AT")
+                return
             
-            # Send SOS alert via web (much faster than SMS)
-            ok, message = self.web_transmitter.send_alert_via_web(
-                "SOS", 
-                SOS_SMS_TEXT, 
-                self.alert_phone
-            )
-            self.signals.sms_result.emit(ok, message)
+            # Update loading message
+            self.loading_dialog.update_message("🚨 Connecting to network...")
+            
+            ok, raw = self.modem_ctrl.send_sms_textmode(number, SOS_SMS_TEXT, timeout=8)  # Reduced from 20
+            self.signals.sms_result.emit(ok, raw)
         finally:
             # Close loading dialog and re-enable buttons
             if self.loading_dialog:
@@ -1318,7 +1238,7 @@ class MinerMonitorApp(QWidget):
 
     def _send_custom_thread(self, number, text):
         # Show loading dialog
-        self.loading_dialog = LoadingDialog(self, "📱 Sending Message...")
+        self.loading_dialog = LoadingDialog(self, "📱 Sending SMS Message...")
         self.loading_dialog.show()
         
         # Disable buttons
@@ -1326,16 +1246,15 @@ class MinerMonitorApp(QWidget):
         self.send_button.setDisabled(True)
         
         try:
-            # Update loading message
-            self.loading_dialog.update_message("📱 Sending via web...")
+            if not self.modem_ctrl.is_alive():
+                self.signals.sms_result.emit(False, "Modem not responding to AT")
+                return
             
-            # Send custom message via web (much faster than SMS)
-            ok, message = self.web_transmitter.send_alert_via_web(
-                "CUSTOM", 
-                text, 
-                number
-            )
-            self.signals.sms_result.emit(ok, message)
+            # Update loading message
+            self.loading_dialog.update_message("📱 Connecting to network...")
+            
+            ok, raw = self.modem_ctrl.send_sms_textmode(number, text, timeout=8)  # Reduced from 20
+            self.signals.sms_result.emit(ok, raw)
         finally:
             # Close loading dialog and re-enable buttons
             if self.loading_dialog:
@@ -1344,12 +1263,12 @@ class MinerMonitorApp(QWidget):
             self.sos_button.setDisabled(False)
             self.send_button.setDisabled(False)
 
-    def on_web_alert_result(self, ok, raw):
+    def on_sms_result(self, ok, raw):
         if ok:
             # Success message with safety styling
             msg = QMessageBox(self)
-            msg.setWindowTitle("✅ Alert Sent Successfully")
-            msg.setText("🌐 Alert sent via web successfully!")
+            msg.setWindowTitle("✅ SMS Sent Successfully")
+            msg.setText("📱 Message sent successfully!")
             msg.setInformativeText(f"Response: {(raw or '')[:200]}")
             msg.setIcon(QMessageBox.Information)
             msg.setStyleSheet("""
@@ -1373,7 +1292,7 @@ class MinerMonitorApp(QWidget):
                 }
             """)
             msg.exec_()
-            self.result_label.setText("✅ Last Alert: Sent Successfully")
+            self.result_label.setText("✅ Last SMS: Sent Successfully")
             self.result_label.setStyleSheet("""
                 QLabel {
                     color: #00ff00;
@@ -1387,8 +1306,8 @@ class MinerMonitorApp(QWidget):
         else:
             # Error message with safety styling
             msg = QMessageBox(self)
-            msg.setWindowTitle("❌ Alert Failed")
-            msg.setText("🌐 Failed to send alert!")
+            msg.setWindowTitle("❌ SMS Failed")
+            msg.setText("📱 Failed to send message!")
             msg.setInformativeText(f"Error: {(raw or '')[:200]}")
             msg.setIcon(QMessageBox.Warning)
             msg.setStyleSheet("""
@@ -1412,7 +1331,7 @@ class MinerMonitorApp(QWidget):
                 }
             """)
             msg.exec_()
-            self.result_label.setText("❌ Last Alert: Failed")
+            self.result_label.setText("❌ Last SMS: Failed")
             self.result_label.setStyleSheet("""
                 QLabel {
                     color: #ff0000;
@@ -1434,15 +1353,15 @@ def main():
     ze03_reader = SerialReaderThread(ZE03_SERIAL, ZE03_BAUD, ze03_queue, name="ZE03Reader")
     ze03_reader.start()
 
-    # Initialize web transmitter instead of modem
-    web_transmitter = WebDataTransmitter()
+    modem_port = MODEM_SERIAL
+    modem = ModemController(modem_port, MODEM_BAUD, timeout=2)
 
     app = QApplication(sys.argv)
     font = QFont()
     font.setPointSize(10)
     app.setFont(font)
 
-    window = MinerMonitorApp(ze03_queue, web_transmitter)
+    window = MinerMonitorApp(ze03_queue, modem)
     window.showFullScreen()
     try:
         sys.exit(app.exec_())
