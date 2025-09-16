@@ -11,13 +11,22 @@ SEND_INTERVAL = 10  # seconds
 TOKEN_REFRESH_INTERVAL = 55 * 60  # refresh every 55 minutes
 APN = "airtelgprs.com"  # Airtel APN
 
-# --- SERVICE ACCOUNT FILE ---
-SERVICE_ACCOUNT_FILE = "service-account.json"
+# --- SERVICE ACCOUNT INFO (embedded) ---
+SERVICE_ACCOUNT_INFO = {
+  "type": "service_account",
+  "project_id": "studio-5053909228-90740",
+  "private_key_id": "e92d42f35f7a606c3713e4af63f4e41ad3296ec5",
+  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCeriXe/JVc6Zsa\nEyhGuk9MDFz8Ct16++1GXvi7OrBug9Xyw5OaZq0TGXZrCT3V5IYBfBpBYAGxrXXp\nc0j6o1bj56t3dw4943/qqMQsvE4Hneo/odPuA+IHER43xTUKxKpRv6tqc/7dAV/V\nuXC6mCVhjB0cqezlmeSjX3oUgjf5CbzPhFrrY0/s7gSRs/MhV5foZ0OcIPbsxsBg\nKIGCKRClKpxBfqp+2EvoHpNDP0f1EAqmRNEBVsz/gQRdLiUb6qN1rgkGaI1oGRwS\nByvwAZtGhdjCRmoQ0IX7p0YSVimZ32X83r/l2RTA6H2MHwxTDr6gPwL4K4DxhFwo\nQEpfiJ+pAgMBAAECggEAAg49fVsGUFLSaI8Q+YGWX2TVm4pEfkBfPYcjb8F94aCh\nl+iCtABag6HTz+UpwOiZ99D0wh4NR5D4sxKEQoL1MDSjGwQW0iRtVsvi5rV1yVF5\nZGOjTDUOq4rEOnK6ki4kCrUR8moYRiKrbChf1nr8GPxosCNfZ0YMGTW2bieVtAsw\nByDD5O+kvOk6uK7qBbKhkSr+fPS55wQ3Jcq9ew39HFww20OJ5ILhg3dLlKJdQRR2\nOnTwqOZpvmWProc/HcVyhnW5saODG/RR43Rc8MOnSh8vn9qN+/2qnt/LUbAex2gG\nmFmLlM1+1AVPU3w4fCrC3sXmtj72cWXKlnPZFoaJBQKBgQDKmI9AZ9gOw/E1GMQR\nIPLS1Jc07zYn1YxNf9YK7Z8JzkG7c/Cbnab+EgYoXGAc6rSydKDrGZZW08dAfMtx\nNpO37Ihjca63NzC4R52ERalzjoUDP+P95n7asmZHCHPWd/KAZA0XKXsg7hoC9VV5\nOGBTYbZXIPTLYi2Z59lS5gA4gwKBgQDIghniN7KNR8DqovWzYZdY42YFpQNGkx9C\n7jn0+9KlVvgw34cTYziIh8FC0cf73h4KbGNV0lI1ZiF33RcgI+NYHWzDBW+8a5O0\n+HicxZrG/rg9075wOOXWiyoFhuMWquEi/v7o22bO4Yo6bLWuumsqjjUAOZxrRkw1\nqhu48fUXYwKBgH1uLKqkYDjsCSdleOZd7tim9CK6w12wMdg9gEhty5wnjby/0ESY\nO65rfFJ6tqrQiSU/Xe2Qfuqs3VzIprAmKRijIeHnnVMjoU9GT3h4JKw9nY5gfQhS\nL1G5R+dMjWNICeSBjTU84lWF9KbGO6/8Pm8BPQH+jnBpDXCPAZb4fUR/AoGARc+W\nd37w+eO7tXYbmeMmsNor0VdMtqvOvJz5LOToyIxpSYrqGsP3EQJDNaKYwIbrarGm\nPGFIIjN2/6bIwHX+V9WW4qfn6XCDMwU36U2bwCE7wLsSmTwWOgamENqQAnpofKjP\n0/9f4jQAzqq+7yEU4vI0XemxHmCRdDXQBSqpLQUCgYEAtSDd4BI5Rn+DxSlYr6L+\nyIK3dZ9geTHu2Gsg0nV6Z/HX3AI5pJt4iFt9yM4+y5WQRs6GfZRlJrOhLNQx8Pim\nXXddIDd6brLPh5WnNk1fg5QvJahC/pRApXnC2u1onyZJZ1bE4YOR6E5/YZKNDHOm\n1rF3jBKzdP627hmp0j1j0xI=\n-----END PRIVATE KEY-----\n",
+  "client_email": "firebase-adminsdk-fbsvc@studio-5053909228-90740.iam.gserviceaccount.com",
+  "client_id": "109877301737436156902",
+  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+  "token_uri": "https://oauth2.googleapis.com/token",
+  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/firebase-adminsdk-fbsvc%4Studio-5053909228-90740.iam.gserviceaccount.com",
+  "universe_domain": "googleapis.com"
+}
 
-with open(SERVICE_ACCOUNT_FILE, "r") as f:
-    SERVICE_ACCOUNT = json.load(f)
-
-PROJECT_ID = SERVICE_ACCOUNT["project_id"]
+PROJECT_ID = SERVICE_ACCOUNT_INFO["project_id"]
 
 # --- SERIAL PORTS ---
 ser_sensor = serial.Serial("/dev/ttyS0", baudrate=9600, timeout=1)      # Winsen ZE03 sensor
@@ -47,21 +56,20 @@ def make_token():
     iat = int(time.time())
     exp = iat + 3600
     payload = {
-        "iss": SERVICE_ACCOUNT["client_email"],
+        "iss": SERVICE_ACCOUNT_INFO["client_email"],
         "scope": "https://www.googleapis.com/auth/datastore",
         "aud": "https://oauth2.googleapis.com/token",
         "iat": iat,
         "exp": exp
     }
-    headers = {"kid": SERVICE_ACCOUNT["private_key_id"]}
+    headers = {"kid": SERVICE_ACCOUNT_INFO["private_key_id"]}
 
-    # Fix private key format
-    raw_key = SERVICE_ACCOUNT["private_key"]
+    # 🔑 Fix private key newlines
+    raw_key = SERVICE_ACCOUNT_INFO["private_key"]
     private_key = raw_key.replace("\\n", "\n").strip()
 
-    # Save for debug (optional)
-    with open("debug_key.pem", "w") as f:
-        f.write(private_key)
+    print(private_key.splitlines()[0])   # Debug
+    print(private_key.splitlines()[-1])  # Debug
 
     signed_jwt = jwt.encode(payload, private_key, algorithm="RS256", headers=headers)
 
@@ -131,7 +139,6 @@ if __name__ == "__main__":
     token_time = time.time()
 
     while True:
-        # Refresh token if expired
         if time.time() - token_time > TOKEN_REFRESH_INTERVAL:
             token = make_token()
             token_time = time.time()
