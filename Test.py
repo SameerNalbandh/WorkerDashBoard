@@ -8,17 +8,17 @@ import datetime
 # --- CONFIGURATION ---
 DEVICE_ID = "SN-PI-001"
 PROJECT_ID = "studio-5053909228-90740"
-APN = "jionet"  # change if needed
+APN = "airtelgprs.com"  # Airtel APN
 
 SEND_INTERVAL = 10  # seconds
-TOKEN_REFRESH_INTERVAL = 55 * 60  # refresh every 55 min
+TOKEN_REFRESH_INTERVAL = 55 * 60  # refresh every 55 minutes
 
 # --- SERVICE ACCOUNT INFO ---
 SERVICE_ACCOUNT = {
   "type": "service_account",
   "project_id": "studio-5053909228-90740",
   "private_key_id": "e92d42f35f7a606c3713e4af63f4e41ad3296ec5",
-  "private_key": "-----BEGIN PRIVATE KEY-----\\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBK...snip...\n-----END PRIVATE KEY-----\\n",
+  "private_key": "-----BEGIN PRIVATE KEY-----\\nMIIEvQIBADANBgkqhki...snip...\\n-----END PRIVATE KEY-----\\n",
   "client_email": "firebase-adminsdk-fbsvc@studio-5053909228-90740.iam.gserviceaccount.com",
   "client_id": "109877301737436156902",
   "auth_uri": "https://accounts.google.com/o/oauth2/auth",
@@ -64,8 +64,13 @@ def make_token():
     }
     headers = {"kid": SERVICE_ACCOUNT["private_key_id"]}
 
-    # 🔑 Fix: convert \n into actual newlines
-    private_key = SERVICE_ACCOUNT["private_key"].replace("\\n", "\n")
+    # 🔑 Fix: normalize PEM format
+    raw_key = SERVICE_ACCOUNT["private_key"]
+    private_key = raw_key.replace("\\n", "\n").replace("\n ", "\n").strip()
+
+    # Debug check
+    print(private_key.splitlines()[0])   # should be BEGIN PRIVATE KEY
+    print(private_key.splitlines()[-1])  # should be END PRIVATE KEY
 
     signed_jwt = jwt.encode(payload, private_key, algorithm="RS256", headers=headers)
 
