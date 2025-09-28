@@ -289,10 +289,10 @@ class ModemController:
             _ = self.send_at("AT+CSMS=1", wait_for=b"OK", timeout=2)
             # Optional: ensure SMS storage
             _ = self.send_at("AT+CPMS=\"ME\",\"ME\",\"ME\"", wait_for=b"OK", timeout=2)
-        self._initialized = True
-        return True, "Ready"
-    except Exception as e:
-        return False, str(e)
+            self._initialized = True
+            return True, "Ready"
+        except Exception as e:
+            return False, str(e)
     
     def pre_initialize_for_fast_sms(self):
         """Pre-initialize modem for ultra-fast SMS sending."""
