@@ -401,6 +401,85 @@ class ModemController:
                 except Exception:
                     pass
 
+    def send_bulk_sms_textmode(self, numbers, text, per_number_timeout=3):
+        """Send SMS to multiple numbers using a single serial session for speed.
+
+        Returns (success_count, total_count, error_by_number)
+        """
+        numbers_list = list(numbers)
+        total = len(numbers_list)
+        success_count = 0
+        error_by_number = {}
+        with self.lock:
+            ser = self._open()
+            try:
+                # Initialize once
+                ser.write(b"ATE0\r")
+                time.sleep(0.05)
+                _ = ser.read(256)
+                ser.write(b"AT+CMGF=1\r")
+                time.sleep(0.1)
+                _ = ser.read(512)
+                ser.write(b"AT+CSCS=\"GSM\"\r")
+                time.sleep(0.05)
+                _ = ser.read(256)
+
+                for number in numbers_list:
+                    try:
+                        # Issue CMGS
+                        cmd = f'AT+CMGS="{number}"\r'.encode()
+                        ser.write(cmd)
+
+                        # Wait for prompt
+                        deadline = time.time() + 3
+                        buf = bytearray()
+                        while time.time() < deadline:
+                            chunk = ser.read(256)
+                            if chunk:
+                                buf.extend(chunk)
+                                if b">" in buf:
+                                    break
+                            else:
+                                time.sleep(0.02)
+
+                        # Send body + Ctrl+Z
+                        ser.write(text.encode() + b"\x1A")
+
+                        # Wait for result
+                        resp = bytearray()
+                        deadline = time.time() + per_number_timeout
+                        got_result = False
+                        while time.time() < deadline:
+                            chunk = ser.read(512)
+                            if chunk:
+                                resp.extend(chunk)
+                                if (b"+CMGS" in resp) or (b"OK" in resp):
+                                    success_count += 1
+                                    got_result = True
+                                    break
+                                if (b"ERROR" in resp) or (b"+CMS ERROR" in resp):
+                                    error_by_number[number] = resp.decode(errors="ignore")
+                                    got_result = True
+                                    break
+                            else:
+                                time.sleep(0.02)
+                        if not got_result:
+                            # Treat as timeout failure to be accurate
+                            error_by_number[number] = "Timeout waiting for send result"
+                    except Exception as e:
+                        error_by_number[number] = f"Exception: {e}"
+                        # Try to drain buffer a bit before next number
+                        try:
+                            _ = ser.read(1024)
+                        except Exception:
+                            pass
+                return success_count, total, error_by_number
+            finally:
+                try:
+                    ser.close()
+                except Exception:
+                    pass
+
     def start_gnss(self):
         try_cmds = ["AT+QGNSS=1", "AT+QGPS=1", "AT+CGNSPWR=1"]
         results = {}
@@ -913,6 +992,7 @@ class MinerMonitorApp(QWidget):
         self.timer.start()
 
         self._busy = False
+        self._sos_in_progress = False
 
     # slots
     def modem_init_worker(self):
@@ -1017,6 +1097,8 @@ class MinerMonitorApp(QWidget):
                 time.sleep(1)
 
     def periodic_tasks(self):
+        if self._sos_in_progress:
+            return
         threading.Thread(target=self.check_modem_and_signal, daemon=True).start()
 
     def check_modem_and_signal(self):
@@ -1053,67 +1135,47 @@ class MinerMonitorApp(QWidget):
 
 
     def _send_sos_thread(self):
-        # ULTRA-FAST SOS - broadcast to all contacts with parallel processing
+        # BULK SOS - single connection, accurate status, fast throughput
+        self._sos_in_progress = True
         self.sos_button.setDisabled(True)
-        self.result_label.setText("🚨 EMERGENCY BROADCAST STARTING...")
+        self.signals.modem_status.emit("Modem: Sending SOS...")
+        self.result_label.setText("🚨 Sending SOS to all contacts...")
         
         try:
             if not self.modem_ctrl.is_alive():
                 self.signals.sms_result.emit(False, "Modem not responding to AT")
                 return
+
+            # Unique ordered list of numbers (contacts + fallback)
+            all_numbers = list(dict.fromkeys(list(self.contacts.values()) + [self.alert_phone]))
             
-            # Get all contact numbers for broadcasting
-            all_numbers = list(self.contacts.values()) + [self.alert_phone]
-            total_count = len(all_numbers)
-            
-            # Use threading for parallel SMS sending for maximum speed
-            success_count = 0
-            failed_numbers = []
-            
-            def send_emergency_sms(number):
-                try:
-                    # Use ultra-fast emergency method
-                    ok, raw = self.modem_ctrl.send_sms_emergency_fast(number, SOS_SMS_TEXT, timeout=2)
-                    return ok, number, raw
-                except Exception as e:
-                    return False, number, str(e)
-            
-            # Send to all contacts in parallel for maximum speed
-            with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
-                # Submit all SMS tasks
-                future_to_number = {
-                    executor.submit(send_emergency_sms, number): number 
-                    for number in all_numbers
-                }
-                
-                # Process results as they complete
-                for future in concurrent.futures.as_completed(future_to_number, timeout=10):
-                    try:
-                        ok, number, result = future.result()
-                        if ok:
-                            success_count += 1
-                        else:
-                            failed_numbers.append(number)
-                        
-                        # Update progress in real-time
-                        self.result_label.setText(f"🚨 EMERGENCY: {success_count}/{total_count} sent...")
-                    except Exception as e:
-                        failed_numbers.append(future_to_number[future])
-                        print(f"Emergency SMS thread error: {e}")
-            
-            # Final result with detailed reporting
+            success_count, total_count, errors = self.modem_ctrl.send_bulk_sms_textmode(
+                all_numbers, SOS_SMS_TEXT, per_number_timeout=3
+            )
+
+            # Update progress
+            self.result_label.setText(f"🚨 SOS progress: {success_count}/{total_count} sent")
+
             if success_count == total_count:
-                self.signals.sms_result.emit(True, f"🚨 EMERGENCY ALERT: Sent to ALL {total_count} contacts successfully!")
+                self.signals.sms_result.emit(True, f"SOS sent to all {total_count} contacts")
             elif success_count > 0:
-                self.signals.sms_result.emit(True, f"🚨 EMERGENCY ALERT: Sent to {success_count}/{total_count} contacts (some failed)")
+                self.signals.sms_result.emit(True, f"SOS sent to {success_count}/{total_count}; failures: {len(errors)}")
             else:
-                self.signals.sms_result.emit(False, "🚨 EMERGENCY FAILED: Could not send to any contacts")
-                
+                self.signals.sms_result.emit(False, "SOS failed for all contacts")
         except Exception as e:
-            self.signals.sms_result.emit(False, f"🚨 EMERGENCY ERROR: {str(e)[:100]}")
+            self.signals.sms_result.emit(False, f"SOS error: {str(e)[:100]}")
         finally:
-            # Re-enable SOS button immediately
             self.sos_button.setDisabled(False)
+            # Restore modem status
+            try:
+                rssi = self.modem_ctrl.get_signal_quality()
+                if rssi is None:
+                    self.signals.modem_status.emit("Modem: Online | Signal: ?")
+                else:
+                    self.signals.gsm_signal.emit(rssi)
+            except Exception:
+                self.signals.modem_status.emit("Modem: Online")
+            self._sos_in_progress = False
 
 
     def on_sms_result(self, ok, raw):
