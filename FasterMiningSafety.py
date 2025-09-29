@@ -858,7 +858,7 @@ class FirebaseUploader:
             return "Normal"
     
     def upload_ppm_data(self, ppm_value):
-        """Upload PPM data to Firebase - FAST & SIMPLE like working code."""
+        """Upload PPM data to Firebase - FAST & SIMPLE with timeout handling."""
         if not self.initialized or not self.db:
             return False, "Firebase not initialized"
         
@@ -879,18 +879,39 @@ class FirebaseUploader:
             }
             
             # Add document to 'readings' collection with auto-generated ID (like working code)
+            # Use ThreadPoolExecutor with timeout for faster failure detection
             doc_ref = self.db.collection('readings').document()
-            doc_ref.set(data)
+            
+            # Try upload with timeout
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(doc_ref.set, data)
+                # Wait max 5 seconds for upload
+                future.result(timeout=5.0)
             
             self.upload_count += 1
             self.last_upload_time = time.time()
             print(f"📡 Uploaded PPM: {ppm_value} to Firestore doc: {doc_ref.id}")
             return True, f"✅ Uploaded! PPM: {ppm_value}"
             
+        except concurrent.futures.TimeoutError:
+            self.failed_uploads += 1
+            print(f"⏱️ Upload timeout: Network too slow or WiFi issue")
+            return False, "⏱️ Timeout - check WiFi"
         except Exception as e:
             self.failed_uploads += 1
-            print(f"❌ Upload failed: {e}")
-            return False, f"❌ Upload failed: {str(e)[:50]}"
+            error_msg = str(e)
+            print(f"❌ Upload failed: {error_msg}")
+            
+            # Provide helpful error messages
+            if "Deadline Exceeded" in error_msg or "timeout" in error_msg.lower():
+                return False, "⏱️ Timeout - check WiFi speed"
+            elif "network" in error_msg.lower() or "connection" in error_msg.lower():
+                return False, "📡 Network error - check WiFi"
+            elif "permission" in error_msg.lower() or "forbidden" in error_msg.lower():
+                return False, "🔒 Permission denied"
+            else:
+                return False, f"❌ {error_msg[:30]}"
     
     def test_connection(self):
         """Test Firebase connection with a simple operation."""
@@ -1401,11 +1422,30 @@ class MinerMonitorApp(QWidget):
             # Unique ordered list of numbers (contacts + fallback)
             all_numbers = list(dict.fromkeys(list(self.contacts.values()) + [self.alert_phone]))
             
-            # Use ULTRA-FAST emergency mode (0.8s timeout per number)
-            # With 6-7 contacts, this takes ~5-6 seconds instead of 18-21 seconds!
+            # Adaptive timeout based on signal strength for reliability
+            # Get current signal quality
+            try:
+                signal = self.modem_ctrl.get_signal_quality()
+                if signal is None or signal < 10:
+                    # Very poor signal: use longer timeout
+                    timeout = 2.0
+                elif signal < 15:
+                    # Poor signal: use medium timeout
+                    timeout = 1.5
+                elif signal < 20:
+                    # Fair signal: use fast timeout
+                    timeout = 1.0
+                else:
+                    # Good signal: use ultra-fast timeout
+                    timeout = 0.8
+            except Exception:
+                # Default to medium timeout if can't read signal
+                timeout = 1.5
+            
+            # Use ULTRA-FAST emergency mode with adaptive timeout
             start_time = time.time()
             success_count, total_count, errors = self.modem_ctrl.send_bulk_sms_emergency_mode(
-                all_numbers, SOS_SMS_TEXT, per_number_timeout=0.8
+                all_numbers, SOS_SMS_TEXT, per_number_timeout=timeout
             )
             elapsed = time.time() - start_time
 
