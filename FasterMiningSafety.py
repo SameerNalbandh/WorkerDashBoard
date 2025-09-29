@@ -25,6 +25,7 @@ import traceback
 from datetime import datetime
 import glob
 import json
+import concurrent.futures
 
 import serial
 from serial import SerialException
@@ -41,8 +42,7 @@ except ImportError:
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QObject
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QLabel, QPushButton, QVBoxLayout, QHBoxLayout,
-    QMessageBox, QProgressBar, QLineEdit, QDialog, QFormLayout,
-    QDialogButtonBox, QSizePolicy, QComboBox, QFrame, QSpacerItem
+    QMessageBox, QProgressBar, QDialog, QDialogButtonBox, QSizePolicy, QFrame, QSpacerItem
 )
 from PyQt5.QtGui import QFont
 
@@ -66,7 +66,7 @@ WINDOW_HEIGHT = 320
 # Single alert destination (edit as fallback)
 ALERT_PHONE = "+911234567890"
 
-# Contact list for dropdown selection
+# Contact list for SOS emergency broadcasting
 CONTACTS = {
     "sameer": "+916352925852",
     "ramsha": "+918179489703",
@@ -290,21 +290,22 @@ class ModemController:
         with self.lock:
             ser = self._open()
             try:
+                # Optimized for speed - reduced delays for emergency SMS
                 ser.write(b"ATE0\r")
-                time.sleep(0.1)
+                time.sleep(0.05)  # Reduced from 0.1
                 _ = ser.read(256)
                 ser.write(b"AT+CMGF=1\r")
-                time.sleep(0.2)
+                time.sleep(0.1)  # Reduced from 0.2
                 _ = ser.read(512)
                 ser.write(b"AT+CSCS=\"GSM\"\r")
-                time.sleep(0.2)
+                time.sleep(0.05)  # Reduced from 0.2
                 _ = ser.read(256)
 
                 cmd = f'AT+CMGS="{number}"\r'.encode()
                 ser.write(cmd)
 
-                # wait for '>' prompt
-                deadline = time.time() + 5
+                # wait for '>' prompt with reduced timeout
+                deadline = time.time() + 3  # Reduced from 5
                 buf = bytearray()
                 while time.time() < deadline:
                     chunk = ser.read(256)
@@ -313,11 +314,11 @@ class ModemController:
                         if b">" in buf:
                             break
                     else:
-                        time.sleep(0.05)
+                        time.sleep(0.02)  # Reduced from 0.05
 
                 ser.write(text.encode() + b"\x1A")
 
-                # wait for result
+                # wait for result with reduced timeout
                 resp = bytearray()
                 deadline = time.time() + timeout
                 while time.time() < deadline:
@@ -327,7 +328,7 @@ class ModemController:
                         if b"+CMGS" in resp or b"OK" in resp or b"ERROR" in resp or b"+CMS ERROR" in resp:
                             break
                     else:
-                        time.sleep(0.05)
+                        time.sleep(0.02)  # Reduced from 0.05
 
                 s = resp.decode(errors="ignore")
                 if "ERROR" in s or "+CMS ERROR" in s:
@@ -337,6 +338,63 @@ class ModemController:
                 return True, s
             except Exception as e:
                 return False, str(e)
+            finally:
+                try:
+                    ser.close()
+                except Exception:
+                    pass
+
+    def send_sms_emergency_fast(self, number, text, timeout=3):
+        """Ultra-fast SMS for emergency situations - minimal error checking"""
+        with self.lock:
+            ser = self._open()
+            try:
+                # Emergency mode - absolute minimum delays
+                ser.write(b"ATE0\r")
+                time.sleep(0.02)  # Ultra-fast
+                _ = ser.read(128)
+                ser.write(b"AT+CMGF=1\r")
+                time.sleep(0.05)  # Ultra-fast
+                _ = ser.read(256)
+                ser.write(b"AT+CSCS=\"GSM\"\r")
+                time.sleep(0.02)  # Ultra-fast
+                _ = ser.read(128)
+
+                cmd = f'AT+CMGS="{number}"\r'.encode()
+                ser.write(cmd)
+
+                # Ultra-fast prompt waiting
+                deadline = time.time() + 2  # Very short timeout
+                buf = bytearray()
+                while time.time() < deadline:
+                    chunk = ser.read(128)
+                    if chunk:
+                        buf.extend(chunk)
+                        if b">" in buf:
+                            break
+                    else:
+                        time.sleep(0.01)  # Ultra-fast polling
+
+                ser.write(text.encode() + b"\x1A")
+
+                # Ultra-fast result waiting
+                resp = bytearray()
+                deadline = time.time() + timeout
+                while time.time() < deadline:
+                    chunk = ser.read(256)
+                    if chunk:
+                        resp.extend(chunk)
+                        if b"+CMGS" in resp or b"OK" in resp:
+                            return True, "Emergency SMS sent"
+                        if b"ERROR" in resp:
+                            return False, "Emergency SMS failed"
+                    else:
+                        time.sleep(0.01)  # Ultra-fast polling
+
+                # If we get here, assume success for emergency
+                return True, "Emergency SMS sent (timeout)"
+            except Exception as e:
+                return False, f"Emergency SMS error: {str(e)[:50]}"
             finally:
                 try:
                     ser.close()
@@ -611,7 +669,7 @@ class MinerMonitorApp(QWidget):
         self.firebase_uploader = FirebaseUploader()
         self._last_upload_time = 0
 
-        # Contacts and selected destination
+        # Emergency contacts for SOS broadcasting
         self.contacts = CONTACTS.copy()
         self.alert_phone = ALERT_PHONE
 
@@ -765,75 +823,19 @@ class MinerMonitorApp(QWidget):
         """)
         self.sos_button.clicked.connect(self.on_sos_pressed)
 
-        self.send_button = QPushButton("📱 SMS 📱")
-        self.send_button.setFont(self.med_font)
-        self.send_button.setMinimumHeight(80)
-        self.send_button.setStyleSheet("""
-            QPushButton {
-                background-color: #ff6b35;
-                color: white;
-                border: 3px solid #e55a2b;
-                border-radius: 15px;
-                font-weight: bold;
-                font-size: 16px;
-            }
-            QPushButton:hover {
-                background-color: #e55a2b;
-                border-color: #cc4a1b;
-            }
-            QPushButton:pressed {
-                background-color: #cc4a1b;
-            }
-            QPushButton:disabled {
-                background-color: #666666;
-                border-color: #444444;
-                color: #aaaaaa;
-            }
-        """)
-        self.send_button.clicked.connect(self.on_send_pressed)
-
         btn_row.addWidget(self.sos_button)
-        btn_row.addWidget(self.send_button)
 
-        # Contact selection row with safety styling
+        # Emergency contacts display
         contact_row = QHBoxLayout()
         contact_row.setSpacing(10)
         
-        contact_label = QLabel("📞 Contact:")
+        contact_label = QLabel("🚨 Emergency Contacts:")
         contact_label.setFont(self.med_font)
         contact_label.setStyleSheet("color: #ff6b35; font-weight: bold;")
         
-        self.contact_dropdown = QComboBox()
-        self.contact_dropdown.setFont(self.med_font)
-        self.contact_dropdown.addItems(sorted(self.contacts.keys()))
-        self.contact_dropdown.setStyleSheet("""
-            QComboBox {
-                background-color: #2a2a2a;
-                color: white;
-                border: 2px solid #ff6b35;
-                border-radius: 8px;
-                padding: 5px;
-                font-weight: bold;
-            }
-            QComboBox::drop-down {
-                border: none;
-            }
-            QComboBox::down-arrow {
-                image: none;
-                border-left: 5px solid transparent;
-                border-right: 5px solid transparent;
-                border-top: 5px solid #ff6b35;
-                margin-right: 5px;
-            }
-            QComboBox QAbstractItemView {
-                background-color: #2a2a2a;
-                color: white;
-                border: 2px solid #ff6b35;
-                selection-background-color: #ff6b35;
-            }
-        """)
-        
-        self.contact_label = QLabel(self.contacts.get(self.contact_dropdown.currentText(), self.alert_phone))
+        # Show all contacts for SOS broadcasting
+        all_contacts = ", ".join([f"{name}: {phone}" for name, phone in self.contacts.items()])
+        self.contact_label = QLabel(f"Broadcasting to: {all_contacts}")
         self.contact_label.setFont(self.small_font)
         self.contact_label.setAlignment(Qt.AlignLeft)
         self.contact_label.setStyleSheet("""
@@ -846,9 +848,7 @@ class MinerMonitorApp(QWidget):
             }
         """)
         
-        self.contact_dropdown.currentIndexChanged.connect(self._on_contact_changed)
         contact_row.addWidget(contact_label)
-        contact_row.addWidget(self.contact_dropdown)
         contact_row.addWidget(self.contact_label)
 
         self.result_label = QLabel("")
@@ -906,10 +906,6 @@ class MinerMonitorApp(QWidget):
         self._busy = False
 
     # slots
-    def _on_contact_changed(self):
-        name = self.contact_dropdown.currentText()
-        self.alert_phone = self.contacts.get(name, ALERT_PHONE)
-        self.contact_label.setText(self.alert_phone)
     def modem_init_worker(self):
         self.signals.modem_status.emit("Modem: Initializing...")
         ok, msg = self.modem_ctrl.initialize_for_sms()
@@ -919,149 +915,6 @@ class MinerMonitorApp(QWidget):
             self.signals.modem_status.emit("Modem: Online")
         else:
             self.signals.modem_status.emit(f"Modem: Init failed - {msg}")
-    # Enhanced on-screen keyboard dialog for SMS text with safety styling
-    def open_sms_keyboard(self):
-        dialog = QDialog(self)
-        dialog.setWindowTitle("📱 Type SMS Message")
-        dialog.setFixedSize(500, 400)
-        dialog.setStyleSheet("""
-            QDialog {
-                background-color: #1a1a1a;
-                color: white;
-            }
-        """)
-        
-        layout = QVBoxLayout(dialog)
-        layout.setSpacing(10)
-
-        # Title
-        title_label = QLabel("📱 Type Your Message")
-        title_label.setAlignment(Qt.AlignCenter)
-        title_label.setStyleSheet("""
-            QLabel {
-                color: #ff6b35;
-                font-size: 18px;
-                font-weight: bold;
-                padding: 10px;
-                background-color: #2a2a2a;
-                border: 2px solid #ff6b35;
-                border-radius: 8px;
-            }
-        """)
-        layout.addWidget(title_label)
-
-        # Input field
-        input_line = QLineEdit()
-        input_line.setFont(self.med_font)
-        input_line.setPlaceholderText("Type your message here...")
-        input_line.setReadOnly(True)
-        input_line.setStyleSheet("""
-            QLineEdit {
-                background-color: #2a2a2a;
-                color: white;
-                border: 2px solid #ff6b35;
-                border-radius: 8px;
-                padding: 10px;
-                font-size: 14px;
-            }
-        """)
-        layout.addWidget(input_line)
-
-        def append_text(t):
-            input_line.setText(input_line.text() + t)
-
-        def backspace():
-            txt = input_line.text()
-            if txt:
-                input_line.setText(txt[:-1])
-
-        # Keyboard grid
-        grid_rows = [
-            list("1234567890"),
-            list("qwertyuiop"),
-            list("asdfghjkl"),
-            list("zxcvbnm"),
-        ]
-        for row in grid_rows:
-            h = QHBoxLayout()
-            h.setSpacing(5)
-            for ch in row:
-                b = QPushButton(ch.upper())
-                b.setMinimumHeight(40)
-                b.setMinimumWidth(40)
-                b.setStyleSheet("""
-                    QPushButton {
-                        background-color: #ff6b35;
-                        color: white;
-                        border: 2px solid #e55a2b;
-                        border-radius: 8px;
-                        font-weight: bold;
-                        font-size: 14px;
-                    }
-                    QPushButton:hover {
-                        background-color: #e55a2b;
-                    }
-                    QPushButton:pressed {
-                        background-color: #cc4a1b;
-                    }
-                """)
-                b.clicked.connect(lambda _, c=ch: append_text(c))
-                h.addWidget(b)
-            layout.addLayout(h)
-
-        # Control buttons
-        controls = QHBoxLayout()
-        controls.setSpacing(10)
-        for label, fn in [("SPACE", lambda: append_text(" ")), ("BACK", backspace), ("CLEAR", lambda: input_line.setText(""))]:
-            b = QPushButton(label)
-            b.setMinimumHeight(40)
-            b.setStyleSheet("""
-                QPushButton {
-                    background-color: #2a2a2a;
-                    color: white;
-                    border: 2px solid #ff6b35;
-                    border-radius: 8px;
-                    font-weight: bold;
-                    font-size: 12px;
-                }
-                QPushButton:hover {
-                    background-color: #ff6b35;
-                }
-            """)
-            b.clicked.connect(fn)
-            controls.addWidget(b)
-        layout.addLayout(controls)
-
-        # Dialog buttons
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        buttons.setStyleSheet("""
-            QPushButton {
-                background-color: #ff6b35;
-                color: white;
-                border: 2px solid #e55a2b;
-                border-radius: 8px;
-                padding: 8px 16px;
-                font-weight: bold;
-                min-width: 80px;
-            }
-            QPushButton:hover {
-                background-color: #e55a2b;
-            }
-            QPushButton#qt_msgboxbuttonbox_button {
-                background-color: #666666;
-                border-color: #444444;
-            }
-            QPushButton#qt_msgboxbuttonbox_button:hover {
-                background-color: #888888;
-            }
-        """)
-        layout.addWidget(buttons)
-        buttons.accepted.connect(dialog.accept)
-        buttons.rejected.connect(dialog.reject)
-
-        if dialog.exec_() == QDialog.Accepted:
-            return input_line.text().strip()
-        return None
 
     def update_ppm(self, ppm):
         self._last_ppm = ppm
@@ -1172,7 +1025,6 @@ class MinerMonitorApp(QWidget):
         def _set():
             self._busy = busy
             self.sos_button.setDisabled(busy)
-            self.send_button.setDisabled(busy)
             self.busy_bar.setVisible(busy)
             self.result_label.setText(text)
         QTimer.singleShot(0, _set)
@@ -1190,77 +1042,70 @@ class MinerMonitorApp(QWidget):
         if reply == QMessageBox.Yes:
             threading.Thread(target=self._send_sos_thread, daemon=True).start()
 
-    def on_send_pressed(self):
-        # Show confirmation dialog for SMS
-        reply = QMessageBox.question(
-            self, 
-            "SMS Confirmation", 
-            "📱 Send SMS Message 📱\n\nAre you sure you want to send a custom SMS message?\n\nThis will send a message to the selected contact.",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No
-        )
-        
-        if reply == QMessageBox.Yes:
-            number = self.alert_phone
-            text = self.open_sms_keyboard()
-            if not text:
-                return
-            threading.Thread(target=self._send_custom_thread, args=(number, text), daemon=True).start()
 
     def _send_sos_thread(self):
-        # Show loading dialog
-        self.loading_dialog = LoadingDialog(self, "🚨 Sending SOS Alert...")
-        self.loading_dialog.show()
-        
-        # Disable buttons
+        # ULTRA-FAST SOS - broadcast to all contacts with parallel processing
         self.sos_button.setDisabled(True)
-        self.send_button.setDisabled(True)
+        self.result_label.setText("🚨 EMERGENCY BROADCAST STARTING...")
         
         try:
-            number = self.alert_phone
             if not self.modem_ctrl.is_alive():
                 self.signals.sms_result.emit(False, "Modem not responding to AT")
                 return
             
-            # Update loading message
-            self.loading_dialog.update_message("🚨 Connecting to network...")
+            # Get all contact numbers for broadcasting
+            all_numbers = list(self.contacts.values()) + [self.alert_phone]
+            total_count = len(all_numbers)
             
-            ok, raw = self.modem_ctrl.send_sms_textmode(number, SOS_SMS_TEXT, timeout=20)
-            self.signals.sms_result.emit(ok, raw)
+            # Use threading for parallel SMS sending for maximum speed
+            success_count = 0
+            failed_numbers = []
+            
+            def send_emergency_sms(number):
+                try:
+                    # Use ultra-fast emergency method
+                    ok, raw = self.modem_ctrl.send_sms_emergency_fast(number, SOS_SMS_TEXT, timeout=2)
+                    return ok, number, raw
+                except Exception as e:
+                    return False, number, str(e)
+            
+            # Send to all contacts in parallel for maximum speed
+            with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+                # Submit all SMS tasks
+                future_to_number = {
+                    executor.submit(send_emergency_sms, number): number 
+                    for number in all_numbers
+                }
+                
+                # Process results as they complete
+                for future in concurrent.futures.as_completed(future_to_number, timeout=10):
+                    try:
+                        ok, number, result = future.result()
+                        if ok:
+                            success_count += 1
+                        else:
+                            failed_numbers.append(number)
+                        
+                        # Update progress in real-time
+                        self.result_label.setText(f"🚨 EMERGENCY: {success_count}/{total_count} sent...")
+                    except Exception as e:
+                        failed_numbers.append(future_to_number[future])
+                        print(f"Emergency SMS thread error: {e}")
+            
+            # Final result with detailed reporting
+            if success_count == total_count:
+                self.signals.sms_result.emit(True, f"🚨 EMERGENCY ALERT: Sent to ALL {total_count} contacts successfully!")
+            elif success_count > 0:
+                self.signals.sms_result.emit(True, f"🚨 EMERGENCY ALERT: Sent to {success_count}/{total_count} contacts (some failed)")
+            else:
+                self.signals.sms_result.emit(False, "🚨 EMERGENCY FAILED: Could not send to any contacts")
+                
+        except Exception as e:
+            self.signals.sms_result.emit(False, f"🚨 EMERGENCY ERROR: {str(e)[:100]}")
         finally:
-            # Close loading dialog and re-enable buttons
-            if self.loading_dialog:
-                self.loading_dialog.close()
-                self.loading_dialog = None
+            # Re-enable SOS button immediately
             self.sos_button.setDisabled(False)
-            self.send_button.setDisabled(False)
 
-    def _send_custom_thread(self, number, text):
-        # Show loading dialog
-        self.loading_dialog = LoadingDialog(self, "📱 Sending SMS Message...")
-        self.loading_dialog.show()
-        
-        # Disable buttons
-        self.sos_button.setDisabled(True)
-        self.send_button.setDisabled(True)
-        
-        try:
-            if not self.modem_ctrl.is_alive():
-                self.signals.sms_result.emit(False, "Modem not responding to AT")
-                return
-            
-            # Update loading message
-            self.loading_dialog.update_message("📱 Connecting to network...")
-            
-            ok, raw = self.modem_ctrl.send_sms_textmode(number, text, timeout=20)
-            self.signals.sms_result.emit(ok, raw)
-        finally:
-            # Close loading dialog and re-enable buttons
-            if self.loading_dialog:
-                self.loading_dialog.close()
-                self.loading_dialog = None
-            self.sos_button.setDisabled(False)
-            self.send_button.setDisabled(False)
 
     def on_sms_result(self, ok, raw):
         if ok:
