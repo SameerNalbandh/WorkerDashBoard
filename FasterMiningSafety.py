@@ -12,6 +12,7 @@ Features:
 - Touch-friendly UI, no emojis, no uploads
 - Robust SMS logic (10s wait). UI loading state & success/fail notifications.
 - GUI updates via Qt signals to avoid painter conflicts.
+- Loud speaker alarm when PPM > 300 (siren sound)
 """
 
 import os
@@ -29,6 +30,10 @@ import concurrent.futures
 
 import serial
 from serial import SerialException
+
+# Sound alarm imports
+import numpy as np
+import pygame
 
 # Firebase imports
 try:
@@ -100,6 +105,36 @@ LOCATION_LNG = 80.5006
 
 # Upload interval in seconds (upload every 30 seconds)
 UPLOAD_INTERVAL = 30
+
+# Sound alarm threshold
+PPM_ALARM_THRESHOLD = 300
+
+# -----------------------------
+# Sound Alarm System
+# -----------------------------
+def make_siren(duration=1000):
+    """Generate a siren-like sound (alternating high/low freq)"""
+    sample_rate = 44100
+    t = np.linspace(0, duration/1000, int(sample_rate * duration/1000), endpoint=False)
+
+    # Alternating between 800Hz and 1600Hz like a fire siren
+    f1, f2 = 800, 1600
+    waveform1 = np.sign(np.sin(2*np.pi*f1*t))  # square wave
+    waveform2 = np.sign(np.sin(2*np.pi*f2*t))
+    waveform = np.concatenate([waveform1, waveform2])
+
+    waveform = (32767 * waveform).astype(np.int16)
+    return pygame.sndarray.make_sound(waveform)
+
+# Initialize pygame mixer for sound
+try:
+    pygame.mixer.init(frequency=44100, size=-16, channels=1)
+    siren_sound = make_siren()
+    SOUND_AVAILABLE = True
+    print("✅ Sound alarm system initialized")
+except Exception as e:
+    SOUND_AVAILABLE = False
+    print(f"⚠️ Sound alarm system not available: {e}")
 
 # -----------------------------
 # Utilities
@@ -753,6 +788,10 @@ class MinerMonitorApp(QWidget):
         self._above_threshold = False
         self.loading_dialog = None
         
+        # Sound alarm control variables
+        self._alarm_playing = False
+        self._alarm_above_threshold = False
+        
         # Initialize Firebase uploader
         self.firebase_uploader = FirebaseUploader()
         self._last_upload_time = 0
@@ -1010,6 +1049,17 @@ class MinerMonitorApp(QWidget):
         self.last_update_label.setText(f"Last update: {datetime.now().strftime('%H:%M:%S')}")
         self.ppm_label.setText(f"PPM: {ppm}")
         
+        # Sound alarm logic for PPM > 300
+        if SOUND_AVAILABLE:
+            if ppm > PPM_ALARM_THRESHOLD:
+                if not self._alarm_above_threshold:
+                    self._alarm_above_threshold = True
+                    self._play_alarm()
+            else:
+                if self._alarm_above_threshold:
+                    self._alarm_above_threshold = False
+                    self._stop_alarm()
+        
         # Worker safety color scheme
         if ppm < PPM_WARN:
             color = "#00ff00"  # Green - Safe
@@ -1049,6 +1099,26 @@ class MinerMonitorApp(QWidget):
         if current_time - self._last_upload_time >= UPLOAD_INTERVAL:
             threading.Thread(target=self._upload_to_firebase, args=(ppm,), daemon=True).start()
             self._last_upload_time = current_time
+
+    def _play_alarm(self):
+        """Play the siren alarm sound"""
+        if SOUND_AVAILABLE and not self._alarm_playing:
+            try:
+                self._alarm_playing = True
+                if not pygame.mixer.get_busy():  # avoid overlap
+                    siren_sound.play()
+            except Exception as e:
+                print(f"Error playing alarm: {e}")
+                self._alarm_playing = False
+
+    def _stop_alarm(self):
+        """Stop the siren alarm sound"""
+        if SOUND_AVAILABLE and self._alarm_playing:
+            try:
+                siren_sound.stop()
+                self._alarm_playing = False
+            except Exception as e:
+                print(f"Error stopping alarm: {e}")
 
     def update_modem_status(self, text):
         self.status_label.setText(text)
@@ -1177,6 +1247,16 @@ class MinerMonitorApp(QWidget):
                 self.signals.modem_status.emit("Modem: Online")
             self._sos_in_progress = False
 
+    def closeEvent(self, event):
+        """Handle application close event"""
+        # Stop any playing alarm
+        if SOUND_AVAILABLE:
+            try:
+                pygame.mixer.stop()
+                pygame.mixer.quit()
+            except Exception:
+                pass
+        event.accept()
 
     def on_sms_result(self, ok, raw):
         if ok:
@@ -1282,6 +1362,12 @@ def main():
         sys.exit(app.exec_())
     finally:
         ze03_reader.stop()
+        # Cleanup sound system
+        if SOUND_AVAILABLE:
+            try:
+                pygame.mixer.quit()
+            except Exception:
+                pass
 
 if __name__ == "__main__":
     main()
