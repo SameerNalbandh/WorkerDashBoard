@@ -834,7 +834,7 @@ class FirebaseUploader:
                 cred = credentials.Certificate(FIREBASE_SERVICE_ACCOUNT_INFO)
                 firebase_admin.initialize_app(cred)
                 print("🚀 Firebase app initialized")
-                else:
+            else:
                 print("⚠️ Firebase app already initialized, reusing connection")
             
             # Initialize Firestore client
