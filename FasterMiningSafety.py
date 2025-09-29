@@ -583,14 +583,21 @@ class FirebaseUploader:
             return "Normal"
     
     def upload_ppm_data(self, ppm_value):
-        """Upload PPM data to Firebase."""
+        """Upload PPM data to Firebase with historical tracking."""
         if not self.initialized or not self.db:
             return False, "Firebase not initialized"
         
         try:
             status = self.determine_status(ppm_value)
             
-            payload = {
+            # Create a new reading object for the history
+            new_reading = {
+                "coLevel": ppm_value,
+                "timestamp": firestore.SERVER_TIMESTAMP
+            }
+            
+            # Prepare the main update payload with historical data
+            update_payload = {
                 "id": DEVICE_ID,
                 "name": DEVICE_NAME,
                 "location": {
@@ -599,24 +606,26 @@ class FirebaseUploader:
                     "lng": LOCATION_LNG,
                 },
                 "status": status,
-                "coLevel": ppm_value,
-                "timestamp": firestore.SERVER_TIMESTAMP,
+                "coLevel": ppm_value,  # This is the latest reading
+                "timestamp": firestore.SERVER_TIMESTAMP,  # This is the last updated time
                 "battery": 100,
                 "deviceType": "Miner Safety Monitor",
                 "sensorType": "ZE03-CO",
-                "lastUpdate": datetime.utcnow().isoformat() + "Z"
+                "lastUpdate": datetime.utcnow().isoformat() + "Z",
+                # Add the new reading to an array named 'historicalData'
+                "historicalData": firestore.ArrayUnion([new_reading])
             }
             
             device_ref = self.db.collection("devices").document(DEVICE_ID)
-            device_ref.set(payload, merge=True)
+            device_ref.set(update_payload, merge=True)
             
             self.upload_count += 1
             self.last_upload_time = time.time()
-            return True, f"Uploaded PPM: {ppm_value}, Status: {status}"
+            return True, f"✅ Success! Data saved to Firestore. PPM: {ppm_value}, Status: {status}"
             
         except Exception as e:
             self.failed_uploads += 1
-            return False, f"Upload failed: {str(e)}"
+            return False, f"❌ Firestore Error. Could not save data. Details: {str(e)}"
     
     def get_stats(self):
         """Get upload statistics."""
