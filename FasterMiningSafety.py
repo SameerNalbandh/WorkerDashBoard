@@ -96,6 +96,55 @@ FIREBASE_SERVICE_ACCOUNT_INFO = {
   "universe_domain": "googleapis.com"
 }
 
+# Alternative Firebase configuration method - try loading from file if dict fails
+def load_firebase_config():
+    """Try to load Firebase configuration from multiple sources."""
+    config_sources = [
+        # Try the hardcoded config first
+        FIREBASE_SERVICE_ACCOUNT_INFO,
+        # Try loading from environment variable
+        None,  # Will be handled below
+        # Try loading from file
+        None   # Will be handled below
+    ]
+    
+    # Try environment variable
+    import os
+    firebase_json = os.environ.get('FIREBASE_SERVICE_ACCOUNT_JSON')
+    if firebase_json:
+        try:
+            import json
+            config_sources[1] = json.loads(firebase_json)
+            print("📁 Loaded Firebase config from environment variable")
+        except Exception as e:
+            print(f"⚠️ Failed to load Firebase config from env var: {e}")
+    
+    # Try loading from file
+    config_files = [
+        "firebase-service-account.json",
+        "service-account.json", 
+        "firebase-config.json",
+        "/etc/firebase/service-account.json"
+    ]
+    
+    for config_file in config_files:
+        try:
+            if os.path.exists(config_file):
+                import json
+                with open(config_file, 'r') as f:
+                    config_sources[2] = json.load(f)
+                    print(f"📁 Loaded Firebase config from file: {config_file}")
+                    break
+        except Exception as e:
+            print(f"⚠️ Failed to load Firebase config from {config_file}: {e}")
+    
+    # Return the first valid config
+    for config in config_sources:
+        if config and isinstance(config, dict):
+            return config
+    
+    return None
+
 # Device configuration for Firebase
 DEVICE_ID = "SN-PI-001"
 DEVICE_NAME = "Miner Safety Monitor - Main Room"
@@ -676,15 +725,85 @@ class FirebaseUploader:
             self._initialize_firebase()
     
     def _initialize_firebase(self):
-        """Initialize Firebase connection."""
+        """Initialize Firebase connection with detailed error handling."""
         try:
-            cred = credentials.Certificate(FIREBASE_SERVICE_ACCOUNT_INFO)
-            firebase_admin.initialize_app(cred)
+            print("🔄 Attempting to initialize Firebase...")
+            
+            # Check if Firebase Admin SDK is available
+            if not FIREBASE_AVAILABLE:
+                print("❌ Firebase Admin SDK not installed")
+                self.initialized = False
+                return
+            
+            # Check if Firebase app is already initialized
+            try:
+                existing_apps = firebase_admin._apps
+                if existing_apps:
+                    print("⚠️ Firebase app already initialized, using existing connection")
+                    self.db = firestore.client()
+                    self.initialized = True
+                    print("✅ Firebase connected using existing app")
+                    return
+            except Exception as e:
+                print(f"🔍 Checking existing apps: {e}")
+            
+            # Validate service account info
+            required_fields = ["type", "project_id", "private_key", "client_email"]
+            for field in required_fields:
+                if field not in FIREBASE_SERVICE_ACCOUNT_INFO:
+                    print(f"❌ Missing required field in service account: {field}")
+                    self.initialized = False
+                    return
+            
+            # Try to load Firebase configuration from multiple sources
+            firebase_config = load_firebase_config()
+            if not firebase_config:
+                print("❌ No valid Firebase configuration found")
+                self.initialized = False
+                return
+            
+            print(f"🔑 Using project: {firebase_config['project_id']}")
+            print(f"📧 Service account: {firebase_config['client_email']}")
+            
+            # Create credentials
+            cred = credentials.Certificate(firebase_config)
+            print("🔑 Credentials created successfully")
+            
+            # Initialize Firebase app with explicit app name to avoid conflicts
+            app_name = f"miner_safety_monitor_{DEVICE_ID}"
+            try:
+                firebase_admin.initialize_app(cred, name=app_name)
+                print(f"🚀 Firebase app '{app_name}' initialized")
+            except ValueError as e:
+                if "already exists" in str(e):
+                    print("⚠️ App already exists, getting existing app")
+                    app = firebase_admin.get_app(app_name)
+                else:
+                    raise e
+            
+            # Initialize Firestore client
             self.db = firestore.client()
+            print("📊 Firestore client initialized")
+            
+            # Test connection with a simple read
+            test_ref = self.db.collection("test").limit(1)
+            print("🧪 Testing Firestore connection...")
+            # Just check if we can create a reference (don't actually read)
+            
             self.initialized = True
-            print("✅ Firebase initialized successfully")
+            print("✅ Firebase initialized successfully!")
+            
+        except firebase_admin.exceptions.FirebaseError as e:
+            print(f"❌ Firebase specific error: {e}")
+            print(f"🔍 Error type: {type(e).__name__}")
+            self.initialized = False
         except Exception as e:
             print(f"❌ Firebase initialization failed: {e}")
+            print(f"🔍 Error type: {type(e).__name__}")
+            print(f"🔍 Error details: {str(e)}")
+            import traceback
+            print("📋 Full traceback:")
+            traceback.print_exc()
             self.initialized = False
     
     def determine_status(self, co_level):
@@ -697,12 +816,15 @@ class FirebaseUploader:
             return "Normal"
     
     def upload_ppm_data(self, ppm_value):
-        """Upload PPM data to Firebase with historical tracking."""
+        """Upload PPM data to Firebase with historical tracking and detailed error handling."""
         if not self.initialized or not self.db:
-            return False, "Firebase not initialized"
+            return False, "Firebase not initialized - check connection"
         
         try:
+            print(f"📤 Attempting to upload PPM data: {ppm_value}")
+            
             status = self.determine_status(ppm_value)
+            print(f"📊 Determined status: {status}")
             
             # Create a new reading object for the history
             new_reading = {
@@ -730,16 +852,58 @@ class FirebaseUploader:
                 "historicalData": firestore.ArrayUnion([new_reading])
             }
             
+            print(f"📝 Preparing to write to collection 'devices', document '{DEVICE_ID}'")
             device_ref = self.db.collection("devices").document(DEVICE_ID)
+            
+            # Attempt the write operation
             device_ref.set(update_payload, merge=True)
+            print("✅ Data written to Firestore successfully")
             
             self.upload_count += 1
             self.last_upload_time = time.time()
             return True, f"✅ Success! Data saved to Firestore. PPM: {ppm_value}, Status: {status}"
             
+        except firebase_admin.exceptions.FirebaseError as e:
+            self.failed_uploads += 1
+            error_msg = f"❌ Firebase Error: {str(e)}"
+            print(error_msg)
+            return False, error_msg
+            
         except Exception as e:
             self.failed_uploads += 1
-            return False, f"❌ Firestore Error. Could not save data. Details: {str(e)}"
+            error_msg = f"❌ Upload Error: {str(e)}"
+            print(error_msg)
+            print(f"🔍 Error type: {type(e).__name__}")
+            
+            # Check for specific error types
+            if "network" in str(e).lower() or "connection" in str(e).lower():
+                error_msg += " (Network/Connection issue)"
+            elif "permission" in str(e).lower() or "forbidden" in str(e).lower():
+                error_msg += " (Permission/Authorization issue)"
+            elif "timeout" in str(e).lower():
+                error_msg += " (Timeout - check network speed)"
+            
+            return False, error_msg
+    
+    def test_connection(self):
+        """Test Firebase connection with a simple operation."""
+        if not self.initialized or not self.db:
+            return False, "Not initialized"
+        
+        try:
+            print("🧪 Testing Firebase connection...")
+            
+            # Try to create a test document and immediately delete it
+            test_ref = self.db.collection("connection_test").document("test")
+            test_ref.set({"timestamp": firestore.SERVER_TIMESTAMP, "test": True})
+            test_ref.delete()
+            
+            print("✅ Connection test successful")
+            return True, "Connection test passed"
+            
+        except Exception as e:
+            print(f"❌ Connection test failed: {e}")
+            return False, f"Connection test failed: {str(e)}"
     
     def get_stats(self):
         """Get upload statistics."""
@@ -1022,6 +1186,8 @@ class MinerMonitorApp(QWidget):
         # Initialize Firebase status
         if self.firebase_uploader.initialized:
             self.signals.firebase_status.emit("📡 Firebase: ✅ Connected")
+            # Test connection after initialization
+            threading.Thread(target=self._test_firebase_connection, daemon=True).start()
         else:
             self.signals.firebase_status.emit("📡 Firebase: ❌ Not Available")
 
@@ -1120,6 +1286,15 @@ class MinerMonitorApp(QWidget):
             except Exception as e:
                 print(f"Error stopping alarm: {e}")
 
+    def _test_firebase_connection(self):
+        """Test Firebase connection in background thread."""
+        if self.firebase_uploader.initialized:
+            success, message = self.firebase_uploader.test_connection()
+            if success:
+                self.signals.firebase_status.emit("📡 Firebase: ✅ Connected & Tested")
+            else:
+                self.signals.firebase_status.emit(f"📡 Firebase: ⚠️ Connected but Test Failed - {message[:30]}...")
+
     def update_modem_status(self, text):
         self.status_label.setText(text)
 
@@ -1134,20 +1309,35 @@ class MinerMonitorApp(QWidget):
         self.firebase_status_label.setText(text)
 
     def _upload_to_firebase(self, ppm_value):
-        """Upload PPM data to Firebase in a separate thread."""
+        """Upload PPM data to Firebase in a separate thread with retry logic."""
         if not self.firebase_uploader.initialized:
             self.signals.firebase_status.emit("📡 Firebase: Not Available")
             return
         
-        try:
-            success, message = self.firebase_uploader.upload_ppm_data(ppm_value)
-            if success:
-                stats = self.firebase_uploader.get_stats()
-                self.signals.firebase_status.emit(f"📡 Firebase: ✅ Uploaded ({stats['upload_count']})")
-            else:
-                self.signals.firebase_status.emit(f"📡 Firebase: ❌ Failed - {message[:30]}...")
-        except Exception as e:
-            self.signals.firebase_status.emit(f"📡 Firebase: ❌ Error - {str(e)[:30]}...")
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                success, message = self.firebase_uploader.upload_ppm_data(ppm_value)
+                if success:
+                    stats = self.firebase_uploader.get_stats()
+                    self.signals.firebase_status.emit(f"📡 Firebase: ✅ Uploaded ({stats['upload_count']})")
+                    return  # Success, exit retry loop
+                else:
+                    if attempt < max_retries - 1:
+                        print(f"⚠️ Upload attempt {attempt + 1} failed, retrying... ({message[:50]})")
+                        time.sleep(2)  # Wait before retry
+                        continue
+                    else:
+                        self.signals.firebase_status.emit(f"📡 Firebase: ❌ Failed after {max_retries} attempts - {message[:30]}...")
+                        return
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    print(f"⚠️ Upload exception attempt {attempt + 1}: {str(e)[:50]}")
+                    time.sleep(2)  # Wait before retry
+                    continue
+                else:
+                    self.signals.firebase_status.emit(f"📡 Firebase: ❌ Error after {max_retries} attempts - {str(e)[:30]}...")
+                    return
 
     def ze03_worker(self):
         while True:
