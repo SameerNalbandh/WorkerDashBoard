@@ -1321,14 +1321,14 @@ class MinerMonitorApp(QWidget):
             self.signals.firebase_status.emit("📡 Firebase: Not Available")
             return
         
-            try:
-                success, message = self.firebase_uploader.upload_ppm_data(ppm_value)
-                if success:
-                    stats = self.firebase_uploader.get_stats()
-                    self.signals.firebase_status.emit(f"📡 Firebase: ✅ Uploaded ({stats['upload_count']})")
-                else:
+        try:
+            success, message = self.firebase_uploader.upload_ppm_data(ppm_value)
+            if success:
+                stats = self.firebase_uploader.get_stats()
+                self.signals.firebase_status.emit(f"📡 Firebase: ✅ Uploaded ({stats['upload_count']})")
+            else:
                 self.signals.firebase_status.emit(f"📡 Firebase: ❌ Failed - {message[:30]}...")
-            except Exception as e:
+        except Exception as e:
             self.signals.firebase_status.emit(f"📡 Firebase: ❌ Error - {str(e)[:30]}...")
 
     def ze03_worker(self):
