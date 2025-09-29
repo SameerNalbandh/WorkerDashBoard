@@ -56,7 +56,7 @@ from PyQt5.QtGui import QFont
 # -----------------------------
 # CONFIG
 # -----------------------------
-ZE03_SERIAL = "/dev/ttyS0"
+ZE03_SERIAL = "/dev/ttyS0fake0"
 ZE03_BAUD = 9600
 
 MODEM_BAUD = 115200
@@ -1339,18 +1339,30 @@ class MinerMonitorApp(QWidget):
     def _upload_to_firebase(self, ppm_value):
         """Upload PPM data to Firebase in a separate thread - FAST & SIMPLE."""
         if not self.firebase_uploader.initialized:
-            self.signals.firebase_status.emit("📡 Firebase: Not Available")
+            try:
+                self.signals.firebase_status.emit("📡 Firebase: Not Available")
+            except RuntimeError:
+                pass  # GUI already closed
             return
         
         try:
             success, message = self.firebase_uploader.upload_ppm_data(ppm_value)
             if success:
                 stats = self.firebase_uploader.get_stats()
-                self.signals.firebase_status.emit(f"📡 Firebase: ✅ Uploaded ({stats['upload_count']})")
+                try:
+                    self.signals.firebase_status.emit(f"📡 Firebase: ✅ Uploaded ({stats['upload_count']})")
+                except RuntimeError:
+                    pass  # GUI already closed
             else:
-                self.signals.firebase_status.emit(f"📡 Firebase: ❌ Failed - {message[:30]}...")
+                try:
+                    self.signals.firebase_status.emit(f"📡 Firebase: ❌ Failed - {message[:30]}...")
+                except RuntimeError:
+                    pass  # GUI already closed
         except Exception as e:
-            self.signals.firebase_status.emit(f"📡 Firebase: ❌ Error - {str(e)[:30]}...")
+            try:
+                self.signals.firebase_status.emit(f"📡 Firebase: ❌ Error - {str(e)[:30]}...")
+            except RuntimeError:
+                pass  # GUI already closed
 
     def ze03_worker(self):
         while True:
@@ -1358,12 +1370,21 @@ class MinerMonitorApp(QWidget):
                 data = self.ze03_q.get()
                 if isinstance(data, bytes):
                     if data.startswith(b"__SERIAL_ERROR__:") or data.startswith(b"__SERIAL_EXCEPTION__:"):
-                        self.signals.modem_status.emit("Sensor serial error")
+                        try:
+                            self.signals.modem_status.emit("Sensor serial error")
+                        except RuntimeError:
+                            pass  # GUI already closed
                         continue
                     self.ze03_parser.feed(data)
                     frames = self.ze03_parser.extract_frames()
                     for ppm, raw in frames:
-                        self.signals.ppm_update.emit(ppm)
+                        try:
+                            self.signals.ppm_update.emit(ppm)
+                        except RuntimeError:
+                            pass  # GUI already closed
+            except RuntimeError:
+                # GUI closed, exit thread gracefully
+                break
             except Exception as e:
                 print("ZE03 worker error:", e)
                 traceback.print_exc()
@@ -1378,12 +1399,23 @@ class MinerMonitorApp(QWidget):
         try:
             alive = self.modem_ctrl.is_alive()
             if not alive:
-                self.signals.modem_status.emit("Modem: Offline")
+                try:
+                    self.signals.modem_status.emit("Modem: Offline")
+                except RuntimeError:
+                    pass  # GUI already closed
                 return
             rssi = self.modem_ctrl.get_signal_quality()
-            self.signals.gsm_signal.emit(rssi)
+            try:
+                self.signals.gsm_signal.emit(rssi)
+            except RuntimeError:
+                pass  # GUI already closed
+        except RuntimeError:
+            pass  # GUI already closed
         except Exception as e:
-            self.signals.modem_status.emit(f"Modem check error: {e}")
+            try:
+                self.signals.modem_status.emit(f"Modem check error: {e}")
+            except RuntimeError:
+                pass  # GUI already closed
 
     def set_busy(self, busy, text=""):
         def _set():
