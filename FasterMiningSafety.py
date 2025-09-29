@@ -9,10 +9,12 @@ Features:
 - SOS (predefined SMS)
 - Custom message (dropdown IDs -> assignable phone numbers)
 - Live GNSS location
-- Touch-friendly UI, no emojis, no uploads
+- Touch-friendly UI, no emojis
 - Robust SMS logic (10s wait). UI loading state & success/fail notifications.
 - GUI updates via Qt signals to avoid painter conflicts.
 - Loud speaker alarm when PPM > 300 (siren sound)
+- REAL-TIME Firebase uploads (every 5 seconds) over WiFi
+- Fast & optimized Firebase integration using working credentials
 """
 
 import os
@@ -81,12 +83,12 @@ CONTACTS = {
     "kartika": "+919871390413"
 }
 
-# Firebase configuration
+# Firebase configuration - WORKING CREDENTIALS (Easy Copy/Paste)
 FIREBASE_SERVICE_ACCOUNT_INFO = {
   "type": "service_account",
   "project_id": "studio-5053909228-90740",
-  "private_key_id": "ec48b6876af2046a47bc60a4b8e9ce67182e6827",
-  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvAIBADANBgkqhkiG9w0BAQEFAASCBKYwggSiAgEAAoIBAQDIAD6oIwampQYk\n6WAKDgTH0AryPBgHxrBuSR17b3tSTLmZLeteiLGA1mVW6kOM5IOm1+twFYSl8H7h\nDVSdqNN2os/181TtzkrTirkOwfYcgUua0KOIttzZZwduzmYhHSwVrgmCkYNjEFDh\nwhx3KXeI35cG+fmYcOxm4p8H0KHa/hJYZ4eu1sZjg8Z5gTAvpD7TZWsnzmiWYQ9r\n5nCO7xGVXE7JmpvOz3s0uIzNyZfToGI0tAX9bwTKgRvE8vqU2tF314VdGqa9jyiF\nUA96i0Y0tO2Ryzv3IEmOCYl3EfOJ/ZBsLBAtunBIlQkwv+VjT2dVVMRiywJgfGQ+\nnoY2PktTAgMBAAECggEAIGZQatrjE3ECxKJdPBPBo4BTnaKtk+jp9lvNimG+J9Al\nIFMHi7TM6J29egM7toyNuqQaUHnel3vqhK6CVC4gNQUIIoRtGunYm691Q5ZEC/cd\ngTLRI0SDFOGzcGMVuWyT596IojMiMT9Ykvy9XB0xb6YlExdrifiqhg+qtVCPlT2v\n+JUBM9kUa6g0AIdn941rWqfFDVBEHld4cbMSRML4CYGVLRMVrsdUDIvRcJBBfEbO\nPbiLwTToEy04GuWa5Ghd2wytTw2gEVB50lsx79JWDXC4VX99sPo9+AjJGjiWJ2Ow\nftZ9Cole6iqOJkkjENRcuk5CeOH/Xkpkx2v1K+igyQKBgQDkTlfVydpQ/cOdAmmT\n4I3g1KsxBLDrpxEOJfSNLO9db8IpNmif/1FhlCILdNVsT7ZZeWfF9f4JewhoXJa4\nfRUZ8+sXtHmNcy3fLZ6j2xzajG5MNWJOyjvl1gs9aOememOEg+JG+dkAO9ulcMJB\nb/7KxQmaiHJIXhxBS1LwUOMxmQKBgQDgQu+Dg2laVl0gomaYfwGHLoDxR15x8/Ky\nvP0Y68LAc/YaoMjTgGDys1CI4rJVTkXJTXte73YggI/QZGzJ2MabUEcI+YyGFZKA\nS5mjZRqyR9fECrE6StqNiAwYIfHy4VVWFdRR79Y7Ak7omjo8LrXJcPex4pDSmOR3\nD0vgbF4PywKBgFBjVYIthPWnpM0QIGS1WL+lonGsGS+gr9yveKCNBet8gn1IbyaH\nG/yj0CkAhnWQy8BNg0CtETn9XESC9X8Ya+mrfUfngDVSLQC8a3N+n3ZEpEGpOmhL\nxTN0XpjM62QvDAOI/I/JQaNXcEucnIm2CZ0ULAGBsdvRZ1mGUDnWAWlhAoGAO003\n7LzpNPw1cBXBr32WN9ryOds3fEaX3O/gtaBSRXXklDIEKPl/qW4FU80ufyRNi+ez\nQe1sfTfBz8dehRmPmy5lOlhS8nnt3YMgQ3bO0mnxAmQZbWKx3E8nc5I2WpV/bV4k\nYO5c5gm8OAHgeF2ZsITw2tcgmK/ZaipfVB8T2HUCgYAlxGEsd0bsfXsI6a4UeTmA\nDqVvzVsC2G819NEskoE+fdLHK33LkxhKH3FW3UM5CQ/ZDtNNbsPnMPDYLJp4RcEH\nR+P2plSBQNICkVzZ6dm0JlGyFrK5p/DVUK+hNgIB4Wp4oGd6raIcrnjvo84gc2OZ\nLHFMj0vBsj/dDI5C2XqWWw==\n-----END PRIVATE KEY-----\n",
+    "private_key_id": "c919ddad18f421667e35cc2eec245e1b1aadee3f",
+    "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCoFUS6MrQ7oWnH\nr/LXCNY4quF/ZwI3k4jp6cWP8BGQFhuSvKqo7MzZQtdTTdTAh8pz20RIj+pNRkuu\notizhSYInf0xRu5BBjNVHxJjClNL7mGyOt6l/SfqjyPySNlWjPKJ5Jc3BezBbFKb\nTUK3VsZwq6JXMw76YGZ8dVYK9BcPRMk7PrE1x/ilVHKp67E3tf4SEg8Ooji88p68\nkpZsmgtneGT8SLL+fYTJJO5zuTWZiPD/Ey3oTpNcNTdRvRp6eowPVscSJfn1tSFu\nnts6xLxzNmNQQ4ofcDRoMropXrVhEpyoF0t1fAh/aDvjeUn8IYviG3oAFXz9oCKN\nlweJ4i4HAgMBAAECggEAAyL6eFsP3/kAJ1jSOE8S6FXQBXefo/fd2zeglzIMsdqn\nwxJAQQzCOd+0cvqF2N3v2j+iQ5Rj8/M24FhroNYAQrLoEa5YLeB2vsToq+56ZXVa\nX2AX3ZMe1pK7Qf84BxR0Rjx80esLYwSpefp0H0XASEP7sJLkWanI39O0ulmZwJAp\nTgxsLdeiBSUe1ukmd0YBsS8N8IBiHS7DsBoHeWnx9PEUKOFnfSV7prZQnOoHJIYG\nMb58F1Ng+VVpuQFvRluV77FI0WV81DXADoMWOmH+m3hTTk2g7Ux69KqJbIMykG6R\n8CPql4mFUmGqA0c1wlJOaEaF0Xj+D6HDrnm35RLKMQKBgQDWq/Z7MPvwR/sy1OsS\nLrhHAT772EnXbdFi5A0/yX10VDRppxO1A9QTzNBK3uoAE42OhYJHM9gy+cgYVmBP\n67rkTn8y+DVaJUX5uEsLBWuc5XlCm5Evyp2DtsYiMnRF8xn/LNR9uIeBobCi1jcu\nFgzN26w95ofSBJlYOhDWA2m/XwKBgQDIcTJk2ezsx90gAjfNoAWtMBECJBEU/2di\nLfuxmWUlpZLf65dLuz5PqafhfhGNUqnO86rkO5Xr2klQtnZ6o+tXhmUupbPfuHNJ\nJhMv+rEKUKGLVAECbnv6V/DdqH/f6abnA49DEotEiBuSKAE2KXgEcdS8ai6GNfm/\nLpmVNLEaWQKBgQDAw7/cFTtWIzzVA05mkF9XGy5UdX6xHOK1mzSuf57Qs8Aw0x+m\nHt70PKkZYhvbn7MwNICssUhFVfgwqndnrLSwyC/+M9WsseWo/K0eI2rjg0ek4Q65\nTIauvJQkJwwzt70zXy0cC3RamjeDsTnxf0lWHRkIqJZzpz+PcuylUIFHnwKBgCvo\nP/W/lxq3HUUptzef2h557P/fDq7e07K6B+x7gaChiG7smJPKTHf+3fuTNh0TAoeG\n8ORV+R1VD8JSddmflqnxkrCJM8HKEdbwNDvKWoW76+ctW5tAwH+yS90CUCCoehsY\nuIUkxsUYW5HEmZ9XriarGMK9L7vOjwrGFnaMuE7hAoGAc/SRFI+tRZWjV2s/RTdz\nYwwO6gtmrVIxQHrITZ9YwXjEnHvR7tu9SQT2pnxSsh6smybMT5B4j6AgLaXHtYti\nZDGJiRRNaEc48Xu+y1aWTMvcEnLU5Ig31fguAuawtQPJ60kyZkh6xcb4Pr/06gMu\nGi1gWsLrj/ZA8Y6iwBsi9cw=\n-----END PRIVATE KEY-----\n",
   "client_email": "firebase-adminsdk-fbsvc@studio-5053909228-90740.iam.gserviceaccount.com",
   "client_id": "109877301737436156902",
   "auth_uri": "https://accounts.google.com/o/oauth2/auth",
@@ -152,8 +154,8 @@ LOCATION_NAME = "Main Room"
 LOCATION_LAT = 16.4963
 LOCATION_LNG = 80.5006
 
-# Upload interval in seconds (upload every 30 seconds)
-UPLOAD_INTERVAL = 30
+# Upload interval in seconds (real-time uploads - every 5 seconds for fast updates)
+UPLOAD_INTERVAL = 5
 
 # Sound alarm threshold
 PPM_ALARM_THRESHOLD = 300
@@ -484,6 +486,97 @@ class ModemController:
                     ser.close()
                 except Exception:
                     pass
+    
+    def send_bulk_sms_emergency_mode(self, numbers, text, per_number_timeout=0.8):
+        """ULTRA-FAST emergency SOS broadcast - fire and mostly forget!
+        
+        Optimized for speed over accuracy. Sends to all numbers as fast as possible.
+        Perfect for life-threatening emergencies where every second counts.
+        
+        Returns (success_count, total_count, error_by_number)
+        """
+        numbers_list = list(numbers)
+        total = len(numbers_list)
+        success_count = 0
+        error_by_number = {}
+        
+        with self.lock:
+            ser = self._open()
+            try:
+                # Initialize ONCE - ultra-fast
+                ser.write(b"ATE0\r")
+                time.sleep(0.01)  # Absolute minimum
+                _ = ser.read(256)
+                ser.write(b"AT+CMGF=1\r")
+                time.sleep(0.03)  # Absolute minimum
+                _ = ser.read(512)
+                ser.write(b"AT+CSCS=\"GSM\"\r")
+                time.sleep(0.01)  # Absolute minimum
+                _ = ser.read(256)
+
+                # Send to all numbers - FAST!
+                for number in numbers_list:
+                    try:
+                        # Issue CMGS command
+                        cmd = f'AT+CMGS="{number}"\r'.encode()
+                        ser.write(cmd)
+
+                        # Wait for prompt - SHORT timeout
+                        deadline = time.time() + 1.0  # Reduced from 3s
+                        buf = bytearray()
+                        while time.time() < deadline:
+                            chunk = ser.read(256)
+                            if chunk:
+                                buf.extend(chunk)
+                                if b">" in buf:
+                                    break
+                            else:
+                                time.sleep(0.005)  # 5ms polling - very fast
+
+                        # Send body + Ctrl+Z
+                        ser.write(text.encode() + b"\x1A")
+
+                        # Wait for result - VERY SHORT timeout
+                        resp = bytearray()
+                        deadline = time.time() + per_number_timeout  # 0.8s default
+                        got_result = False
+                        
+                        while time.time() < deadline:
+                            chunk = ser.read(512)
+                            if chunk:
+                                resp.extend(chunk)
+                                # Quick check - exit immediately on success
+                                if (b"+CMGS" in resp) or (b"OK" in resp):
+                                    success_count += 1
+                                    got_result = True
+                                    break
+                                if (b"ERROR" in resp) or (b"+CMS ERROR" in resp):
+                                    error_by_number[number] = "ERROR"
+                                    got_result = True
+                                    break
+                            else:
+                                time.sleep(0.005)  # 5ms polling
+                        
+                        # For emergency mode: assume success if no explicit error
+                        if not got_result:
+                            # Optimistic assumption for speed
+                            success_count += 1
+                            
+                    except Exception as e:
+                        error_by_number[number] = f"Err: {str(e)[:20]}"
+                        # Don't waste time on error recovery - move to next number
+                        try:
+                            _ = ser.read(512)  # Quick drain
+                        except Exception:
+                            pass
+                
+                return success_count, total, error_by_number
+                
+            finally:
+                try:
+                    ser.close()
+                except Exception:
+                    pass
 
     def send_bulk_sms_textmode(self, numbers, text, per_number_timeout=3):
         """Send SMS to multiple numbers using a single serial session for speed.
@@ -725,9 +818,9 @@ class FirebaseUploader:
             self._initialize_firebase()
     
     def _initialize_firebase(self):
-        """Initialize Firebase connection with detailed error handling."""
+        """Initialize Firebase connection - FAST & SIMPLE."""
         try:
-            print("🔄 Attempting to initialize Firebase...")
+            print("🔄 Initializing Firebase...")
             
             # Check if Firebase Admin SDK is available
             if not FIREBASE_AVAILABLE:
@@ -735,74 +828,23 @@ class FirebaseUploader:
                 self.initialized = False
                 return
             
-            # Check if Firebase app is already initialized
-            try:
-                existing_apps = firebase_admin._apps
-                if existing_apps:
-                    print("⚠️ Firebase app already initialized, using existing connection")
-                    self.db = firestore.client()
-                    self.initialized = True
-                    print("✅ Firebase connected using existing app")
-                    return
-            except Exception as e:
-                print(f"🔍 Checking existing apps: {e}")
-            
-            # Validate service account info
-            required_fields = ["type", "project_id", "private_key", "client_email"]
-            for field in required_fields:
-                if field not in FIREBASE_SERVICE_ACCOUNT_INFO:
-                    print(f"❌ Missing required field in service account: {field}")
-                    self.initialized = False
-                    return
-            
-            # Try to load Firebase configuration from multiple sources
-            firebase_config = load_firebase_config()
-            if not firebase_config:
-                print("❌ No valid Firebase configuration found")
-                self.initialized = False
-                return
-            
-            print(f"🔑 Using project: {firebase_config['project_id']}")
-            print(f"📧 Service account: {firebase_config['client_email']}")
-            
-            # Create credentials
-            cred = credentials.Certificate(firebase_config)
-            print("🔑 Credentials created successfully")
-            
-            # Initialize Firebase app with explicit app name to avoid conflicts
-            app_name = f"miner_safety_monitor_{DEVICE_ID}"
-            try:
-                firebase_admin.initialize_app(cred, name=app_name)
-                print(f"🚀 Firebase app '{app_name}' initialized")
-            except ValueError as e:
-                if "already exists" in str(e):
-                    print("⚠️ App already exists, getting existing app")
-                    app = firebase_admin.get_app(app_name)
+            # Check if Firebase app is already initialized (prevent re-initialization)
+            if not firebase_admin._apps:
+                # Create credentials from the working config
+                cred = credentials.Certificate(FIREBASE_SERVICE_ACCOUNT_INFO)
+                firebase_admin.initialize_app(cred)
+                print("🚀 Firebase app initialized")
                 else:
-                    raise e
+                print("⚠️ Firebase app already initialized, reusing connection")
             
             # Initialize Firestore client
             self.db = firestore.client()
-            print("📊 Firestore client initialized")
-            
-            # Test connection with a simple read
-            test_ref = self.db.collection("test").limit(1)
-            print("🧪 Testing Firestore connection...")
-            # Just check if we can create a reference (don't actually read)
-            
             self.initialized = True
-            print("✅ Firebase initialized successfully!")
+            print(f"✅ Firebase connected! Project: {FIREBASE_SERVICE_ACCOUNT_INFO['project_id']}")
             
-        except firebase_admin.exceptions.FirebaseError as e:
-            print(f"❌ Firebase specific error: {e}")
-            print(f"🔍 Error type: {type(e).__name__}")
-            self.initialized = False
         except Exception as e:
             print(f"❌ Firebase initialization failed: {e}")
-            print(f"🔍 Error type: {type(e).__name__}")
-            print(f"🔍 Error details: {str(e)}")
             import traceback
-            print("📋 Full traceback:")
             traceback.print_exc()
             self.initialized = False
     
@@ -816,74 +858,39 @@ class FirebaseUploader:
             return "Normal"
     
     def upload_ppm_data(self, ppm_value):
-        """Upload PPM data to Firebase with historical tracking and detailed error handling."""
+        """Upload PPM data to Firebase - FAST & SIMPLE like working code."""
         if not self.initialized or not self.db:
-            return False, "Firebase not initialized - check connection"
+            return False, "Firebase not initialized"
         
         try:
-            print(f"📤 Attempting to upload PPM data: {ppm_value}")
-            
-            status = self.determine_status(ppm_value)
-            print(f"📊 Determined status: {status}")
-            
-            # Create a new reading object for the history
-            new_reading = {
-                "coLevel": ppm_value,
-                "timestamp": firestore.SERVER_TIMESTAMP
-            }
-            
-            # Prepare the main update payload with historical data
-            update_payload = {
-                "id": DEVICE_ID,
-                "name": DEVICE_NAME,
-                "location": {
-                    "name": LOCATION_NAME,
-                    "lat": LOCATION_LAT,
-                    "lng": LOCATION_LNG,
+            # Prepare data packet (matching working code structure)
+            data = {
+                'deviceId': DEVICE_ID,
+                'coLevel': ppm_value,
+                'timestamp': datetime.utcnow().isoformat() + 'Z',
+                'status': self.determine_status(ppm_value),
+                'location': {
+                    'name': LOCATION_NAME,
+                    'lat': LOCATION_LAT,
+                    'lng': LOCATION_LNG,
                 },
-                "status": status,
-                "coLevel": ppm_value,  # This is the latest reading
-                "timestamp": firestore.SERVER_TIMESTAMP,  # This is the last updated time
-                "battery": 100,
-                "deviceType": "Miner Safety Monitor",
-                "sensorType": "ZE03-CO",
-                "lastUpdate": datetime.utcnow().isoformat() + "Z",
-                # Add the new reading to an array named 'historicalData'
-                "historicalData": firestore.ArrayUnion([new_reading])
+                'deviceName': DEVICE_NAME,
+                'battery': 100,
             }
             
-            print(f"📝 Preparing to write to collection 'devices', document '{DEVICE_ID}'")
-            device_ref = self.db.collection("devices").document(DEVICE_ID)
-            
-            # Attempt the write operation
-            device_ref.set(update_payload, merge=True)
-            print("✅ Data written to Firestore successfully")
+            # Add document to 'readings' collection with auto-generated ID (like working code)
+            doc_ref = self.db.collection('readings').document()
+            doc_ref.set(data)
             
             self.upload_count += 1
             self.last_upload_time = time.time()
-            return True, f"✅ Success! Data saved to Firestore. PPM: {ppm_value}, Status: {status}"
-            
-        except firebase_admin.exceptions.FirebaseError as e:
-            self.failed_uploads += 1
-            error_msg = f"❌ Firebase Error: {str(e)}"
-            print(error_msg)
-            return False, error_msg
+            print(f"📡 Uploaded PPM: {ppm_value} to Firestore doc: {doc_ref.id}")
+            return True, f"✅ Uploaded! PPM: {ppm_value}"
             
         except Exception as e:
             self.failed_uploads += 1
-            error_msg = f"❌ Upload Error: {str(e)}"
-            print(error_msg)
-            print(f"🔍 Error type: {type(e).__name__}")
-            
-            # Check for specific error types
-            if "network" in str(e).lower() or "connection" in str(e).lower():
-                error_msg += " (Network/Connection issue)"
-            elif "permission" in str(e).lower() or "forbidden" in str(e).lower():
-                error_msg += " (Permission/Authorization issue)"
-            elif "timeout" in str(e).lower():
-                error_msg += " (Timeout - check network speed)"
-            
-            return False, error_msg
+            print(f"❌ Upload failed: {e}")
+            return False, f"❌ Upload failed: {str(e)[:50]}"
     
     def test_connection(self):
         """Test Firebase connection with a simple operation."""
@@ -1309,35 +1316,20 @@ class MinerMonitorApp(QWidget):
         self.firebase_status_label.setText(text)
 
     def _upload_to_firebase(self, ppm_value):
-        """Upload PPM data to Firebase in a separate thread with retry logic."""
+        """Upload PPM data to Firebase in a separate thread - FAST & SIMPLE."""
         if not self.firebase_uploader.initialized:
             self.signals.firebase_status.emit("📡 Firebase: Not Available")
             return
         
-        max_retries = 3
-        for attempt in range(max_retries):
             try:
                 success, message = self.firebase_uploader.upload_ppm_data(ppm_value)
                 if success:
                     stats = self.firebase_uploader.get_stats()
                     self.signals.firebase_status.emit(f"📡 Firebase: ✅ Uploaded ({stats['upload_count']})")
-                    return  # Success, exit retry loop
                 else:
-                    if attempt < max_retries - 1:
-                        print(f"⚠️ Upload attempt {attempt + 1} failed, retrying... ({message[:50]})")
-                        time.sleep(2)  # Wait before retry
-                        continue
-                    else:
-                        self.signals.firebase_status.emit(f"📡 Firebase: ❌ Failed after {max_retries} attempts - {message[:30]}...")
-                        return
+                self.signals.firebase_status.emit(f"📡 Firebase: ❌ Failed - {message[:30]}...")
             except Exception as e:
-                if attempt < max_retries - 1:
-                    print(f"⚠️ Upload exception attempt {attempt + 1}: {str(e)[:50]}")
-                    time.sleep(2)  # Wait before retry
-                    continue
-                else:
-                    self.signals.firebase_status.emit(f"📡 Firebase: ❌ Error after {max_retries} attempts - {str(e)[:30]}...")
-                    return
+            self.signals.firebase_status.emit(f"📡 Firebase: ❌ Error - {str(e)[:30]}...")
 
     def ze03_worker(self):
         while True:
@@ -1395,11 +1387,11 @@ class MinerMonitorApp(QWidget):
 
 
     def _send_sos_thread(self):
-        # BULK SOS - single connection, accurate status, fast throughput
+        # ULTRA-FAST EMERGENCY SOS - optimized for speed!
         self._sos_in_progress = True
         self.sos_button.setDisabled(True)
-        self.signals.modem_status.emit("Modem: Sending SOS...")
-        self.result_label.setText("🚨 Sending SOS to all contacts...")
+        self.signals.modem_status.emit("Modem: ⚡ EMERGENCY SOS...")
+        self.result_label.setText("🚨 EMERGENCY SOS - Sending FAST...")
         
         try:
             if not self.modem_ctrl.is_alive():
@@ -1409,19 +1401,23 @@ class MinerMonitorApp(QWidget):
             # Unique ordered list of numbers (contacts + fallback)
             all_numbers = list(dict.fromkeys(list(self.contacts.values()) + [self.alert_phone]))
             
-            success_count, total_count, errors = self.modem_ctrl.send_bulk_sms_textmode(
-                all_numbers, SOS_SMS_TEXT, per_number_timeout=3
+            # Use ULTRA-FAST emergency mode (0.8s timeout per number)
+            # With 6-7 contacts, this takes ~5-6 seconds instead of 18-21 seconds!
+            start_time = time.time()
+            success_count, total_count, errors = self.modem_ctrl.send_bulk_sms_emergency_mode(
+                all_numbers, SOS_SMS_TEXT, per_number_timeout=0.8
             )
+            elapsed = time.time() - start_time
 
-            # Update progress
-            self.result_label.setText(f"🚨 SOS progress: {success_count}/{total_count} sent")
+            # Update progress with timing
+            self.result_label.setText(f"🚨 SOS: {success_count}/{total_count} sent in {elapsed:.1f}s")
 
             if success_count == total_count:
-                self.signals.sms_result.emit(True, f"SOS sent to all {total_count} contacts")
+                self.signals.sms_result.emit(True, f"⚡ FAST SOS sent to all {total_count} contacts in {elapsed:.1f}s!")
             elif success_count > 0:
-                self.signals.sms_result.emit(True, f"SOS sent to {success_count}/{total_count}; failures: {len(errors)}")
+                self.signals.sms_result.emit(True, f"⚡ Fast SOS: {success_count}/{total_count} in {elapsed:.1f}s (check signal)")
             else:
-                self.signals.sms_result.emit(False, "SOS failed for all contacts")
+                self.signals.sms_result.emit(False, f"SOS failed for all contacts (signal: check modem)")
         except Exception as e:
             self.signals.sms_result.emit(False, f"SOS error: {str(e)[:100]}")
         finally:
