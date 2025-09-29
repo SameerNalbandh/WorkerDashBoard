@@ -36,7 +36,7 @@ try:
     FIREBASE_AVAILABLE = True
 except ImportError:
     FIREBASE_AVAILABLE = False
-    print("âš ï¸ Firebase Admin SDK not installed. PPM upload functionality will be disabled.")
+    print("⚠️ Firebase Admin SDK not installed. PPM upload functionality will be disabled.")
 
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QObject
 from PyQt5.QtWidgets import (
@@ -106,14 +106,6 @@ UPLOAD_INTERVAL = 30
 # -----------------------------
 def current_ts():
     return datetime.utcnow().isoformat() + "Z"
-
-def read_co_sensor():
-    """Read CO sensor value from the ZE03 sensor."""
-    # This function should be called from the context where we have access to the current PPM reading
-    # For now, we'll return the last known PPM value from the GUI
-    # In a real implementation, this might read directly from the serial port
-    # or access the last reading from a shared variable
-    return 50  # Placeholder - in practice, this would get the current PPM from the sensor
 
 # -----------------------------
 # ZE03 Parser
@@ -293,91 +285,8 @@ class ModemController:
             return True, "Ready"
         except Exception as e:
             return False, str(e)
-    
-    def pre_initialize_for_fast_sms(self):
-        """Pre-initialize modem for ultra-fast SMS sending."""
-        try:
-            # Pre-configure modem for maximum speed
-            steps = [
-                ("ATE0", 1),  # Echo off
-                ("AT+CMEE=1", 1),  # Minimal error reporting
-                ("AT+CMGF=1", 1),  # Text mode
-                ("AT+CSCS=\"GSM\"", 1),  # Character set
-                ("AT+CSMS=1", 1),  # SMS service
-                ("AT+CPMS=\"ME\",\"ME\",\"ME\"", 1),  # Memory settings
-            ]
-            for cmd, to in steps:
-                _ = self.send_at(cmd, wait_for=b"OK", timeout=to)
-            return True, "Pre-initialized for fast SMS"
-        except Exception as e:
-            return False, str(e)
-
-    def send_sms_textmode_fast(self, number, text, timeout=3):
-        """Lightning-fast SMS sending with optimized timing and reduced delays."""
-        with self.lock:
-            ser = self._open()
-            try:
-                # Ultra-fast sequence - skip initialization if pre-configured
-                if not hasattr(self, '_fast_mode_configured'):
-                    # Quick setup only if not pre-configured
-                    ser.write(b"ATE0\r")
-                    time.sleep(0.02)
-                    ser.read(64)
-                    
-                    ser.write(b"AT+CMGF=1\r")
-                    time.sleep(0.02)
-                    ser.read(64)
-                    
-                    ser.write(b"AT+CSCS=\"GSM\"\r")
-                    time.sleep(0.02)
-                    ser.read(64)
-                    self._fast_mode_configured = True
-
-                cmd = f'AT+CMGS="{number}"\r'.encode()
-                ser.write(cmd)
-
-                # Ultra-fast prompt detection
-                deadline = time.time() + 2  # Reduced from 3
-                buf = bytearray()
-                while time.time() < deadline:
-                    chunk = ser.read(64)  # Even smaller chunks
-                    if chunk:
-                        buf.extend(chunk)
-                        if b">" in buf:
-                            break
-                    else:
-                        time.sleep(0.01)  # Reduced from 0.02
-
-                ser.write(text.encode() + b"\x1A")
-
-                # Ultra-fast result detection
-                resp = bytearray()
-                deadline = time.time() + timeout
-                while time.time() < deadline:
-                    chunk = ser.read(128)  # Smaller chunks
-                    if chunk:
-                        resp.extend(chunk)
-                        if b"+CMGS" in resp or b"OK" in resp or b"ERROR" in resp or b"+CMS ERROR" in resp:
-                            break
-                    else:
-                        time.sleep(0.01)  # Reduced from 0.02
-
-                s = resp.decode(errors="ignore")
-                if "ERROR" in s or "+CMS ERROR" in s:
-                    return False, s
-                if "+CMGS" in s or "OK" in s:
-                    return True, s
-                return True, s
-            except Exception as e:
-                return False, str(e)
-            finally:
-                try:
-                    ser.close()
-                except Exception:
-                    pass
 
     def send_sms_textmode(self, number, text, timeout=10):
-        """Original SMS method for backward compatibility."""
         with self.lock:
             ser = self._open()
             try:
@@ -433,70 +342,6 @@ class ModemController:
                     ser.close()
                 except Exception:
                     pass
-
-    def send_sms_to_all_contacts_parallel(self, contacts_dict, text, timeout=5):
-        """Send SMS to all contacts in parallel for maximum speed."""
-        import concurrent.futures
-        from threading import Lock
-        
-        results = {}
-        results_lock = Lock()
-        
-        def send_to_contact(contact_name, phone_number):
-            """Send SMS to a single contact."""
-            try:
-                success, response = self.send_sms_textmode_fast(phone_number, text, timeout)
-                with results_lock:
-                    results[contact_name] = {
-                        'phone': phone_number,
-                        'success': success,
-                        'response': response[:100] if response else "No response"
-                    }
-                return contact_name, success, response
-            except Exception as e:
-                with results_lock:
-                    results[contact_name] = {
-                        'phone': phone_number,
-                        'success': False,
-                        'response': f"Exception: {str(e)[:100]}"
-                    }
-                return contact_name, False, str(e)
-        
-        # Send to all contacts in parallel using ThreadPoolExecutor
-        with concurrent.futures.ThreadPoolExecutor(max_workers=len(contacts_dict)) as executor:
-            # Submit all SMS sending tasks
-            future_to_contact = {
-                executor.submit(send_to_contact, name, phone): name 
-                for name, phone in contacts_dict.items()
-            }
-            
-            # Collect results as they complete
-            completed_count = 0
-            total_count = len(contacts_dict)
-            
-            for future in concurrent.futures.as_completed(future_to_contact):
-                contact_name = future_to_contact[future]
-                try:
-                    name, success, response = future.result()
-                    completed_count += 1
-                except Exception as e:
-                    with results_lock:
-                        results[contact_name] = {
-                            'phone': contacts_dict[contact_name],
-                            'success': False,
-                            'response': f"Future exception: {str(e)[:100]}"
-                        }
-        
-        # Calculate summary statistics
-        successful = sum(1 for r in results.values() if r['success'])
-        failed = len(results) - successful
-        
-        return {
-            'total': total_count,
-            'successful': successful,
-            'failed': failed,
-            'results': results
-        }
 
     def start_gnss(self):
         try_cmds = ["AT+QGNSS=1", "AT+QGPS=1", "AT+CGNSPWR=1"]
@@ -665,9 +510,9 @@ class FirebaseUploader:
             firebase_admin.initialize_app(cred)
             self.db = firestore.client()
             self.initialized = True
-            print("âœ… Firebase initialized successfully")
+            print("✅ Firebase initialized successfully")
         except Exception as e:
-            print(f"âŒ Firebase initialization failed: {e}")
+            print(f"❌ Firebase initialization failed: {e}")
             self.initialized = False
     
     def determine_status(self, co_level):
@@ -679,51 +524,41 @@ class FirebaseUploader:
         else:
             return "Normal"
     
-    def send_data_to_firestore(self, co_level=None):
-        """Packages sensor data and adds it to a historical list in Firestore."""
+    def upload_ppm_data(self, ppm_value):
+        """Upload PPM data to Firebase."""
         if not self.initialized or not self.db:
             return False, "Firebase not initialized"
         
-        # Use provided co_level or read from sensor
-        if co_level is None:
-            co_level = read_co_sensor()
-        
-        status = self.determine_status(co_level)
-
         try:
-            device_ref = self.db.collection("devices").document(DEVICE_ID)
-
-            # Create a new reading object for the history
-            new_reading = {
-                "coLevel": co_level,
-                "timestamp": firestore.SERVER_TIMESTAMP
-            }
-
-            # Prepare the main update payload
-            update_payload = {
+            status = self.determine_status(ppm_value)
+            
+            payload = {
+                "id": DEVICE_ID,
                 "name": DEVICE_NAME,
-                "location": { "name": LOCATION_NAME, "lat": LOCATION_LAT, "lng": LOCATION_LNG },
+                "location": {
+                    "name": LOCATION_NAME,
+                    "lat": LOCATION_LAT,
+                    "lng": LOCATION_LNG,
+                },
                 "status": status,
-                "coLevel": co_level, # This is the latest reading
-                "timestamp": firestore.SERVER_TIMESTAMP, # This is the last updated time
-                # Add the new reading to an array named 'historicalData'
-                "historicalData": firestore.ArrayUnion([new_reading])
+                "coLevel": ppm_value,
+                "timestamp": firestore.SERVER_TIMESTAMP,
+                "battery": 100,
+                "deviceType": "Miner Safety Monitor",
+                "sensorType": "ZE03-CO",
+                "lastUpdate": datetime.utcnow().isoformat() + "Z"
             }
             
-            # Use .set() with merge=True to create or update the document
-            device_ref.set(update_payload, merge=True)
+            device_ref = self.db.collection("devices").document(DEVICE_ID)
+            device_ref.set(payload, merge=True)
             
             self.upload_count += 1
             self.last_upload_time = time.time()
-            return True, f"✅ Success! Data saved to Firestore. PPM: {co_level}, Status: {status}"
+            return True, f"Uploaded PPM: {ppm_value}, Status: {status}"
             
         except Exception as e:
             self.failed_uploads += 1
-            return False, f"❌ Firestore Error. Could not save data. Details: {e}"
-    
-    def upload_ppm_data(self, ppm_value):
-        """Upload PPM data to Firebase - wrapper for backward compatibility."""
-        return self.send_data_to_firestore(ppm_value)
+            return False, f"Upload failed: {str(e)}"
     
     def get_stats(self):
         """Get upload statistics."""
@@ -789,7 +624,7 @@ class MinerMonitorApp(QWidget):
         top_bar = QHBoxLayout()
         top_bar.setSpacing(10)
         
-        self.title_label = QLabel("âš ï¸ MINER SAFETY MONITOR âš ï¸")
+        self.title_label = QLabel("⚠️ MINER SAFETY MONITOR ⚠️")
         self.title_label.setFont(self.title_font)
         self.title_label.setAlignment(Qt.AlignCenter)
         self.title_label.setStyleSheet("""
@@ -803,7 +638,7 @@ class MinerMonitorApp(QWidget):
             }
         """)
         
-        close_btn = QPushButton("âœ•")
+        close_btn = QPushButton("✕")
         close_btn.setFont(self.med_font)
         close_btn.setFixedSize(40, 40)
         close_btn.setStyleSheet("""
@@ -862,7 +697,7 @@ class MinerMonitorApp(QWidget):
         """)
 
         # Firebase status label
-        self.firebase_status_label = QLabel("ðŸ“¡ Firebase: --")
+        self.firebase_status_label = QLabel("📡 Firebase: --")
         self.firebase_status_label.setFont(self.small_font)
         self.firebase_status_label.setAlignment(Qt.AlignCenter)
         self.firebase_status_label.setStyleSheet("""
@@ -903,7 +738,7 @@ class MinerMonitorApp(QWidget):
         btn_row = QHBoxLayout()
         btn_row.setSpacing(15)
         
-        self.sos_button = QPushButton("ðŸš¨ SOS ðŸš¨")
+        self.sos_button = QPushButton("🚨 SOS 🚨")
         self.sos_button.setFont(self.med_font)
         self.sos_button.setMinimumHeight(80)
         self.sos_button.setStyleSheet("""
@@ -930,7 +765,7 @@ class MinerMonitorApp(QWidget):
         """)
         self.sos_button.clicked.connect(self.on_sos_pressed)
 
-        self.send_button = QPushButton("ðŸ“± SMS ðŸ“±")
+        self.send_button = QPushButton("📱 SMS 📱")
         self.send_button.setFont(self.med_font)
         self.send_button.setMinimumHeight(80)
         self.send_button.setStyleSheet("""
@@ -964,7 +799,7 @@ class MinerMonitorApp(QWidget):
         contact_row = QHBoxLayout()
         contact_row.setSpacing(10)
         
-        contact_label = QLabel("ðŸ“ž Contact:")
+        contact_label = QLabel("📞 Contact:")
         contact_label.setFont(self.med_font)
         contact_label.setStyleSheet("color: #ff6b35; font-weight: bold;")
         
@@ -1059,9 +894,9 @@ class MinerMonitorApp(QWidget):
 
         # Initialize Firebase status
         if self.firebase_uploader.initialized:
-            self.signals.firebase_status.emit("ðŸ“¡ Firebase: âœ… Connected")
+            self.signals.firebase_status.emit("📡 Firebase: ✅ Connected")
         else:
-            self.signals.firebase_status.emit("ðŸ“¡ Firebase: âŒ Not Available")
+            self.signals.firebase_status.emit("📡 Firebase: ❌ Not Available")
 
         self.timer = QTimer()
         self.timer.setInterval(5000)
@@ -1079,20 +914,15 @@ class MinerMonitorApp(QWidget):
         self.signals.modem_status.emit("Modem: Initializing...")
         ok, msg = self.modem_ctrl.initialize_for_sms()
         if ok:
-            # Pre-initialize for ultra-fast SMS
-            fast_ok, fast_msg = self.modem_ctrl.pre_initialize_for_fast_sms()
             rssi = self.modem_ctrl.get_signal_quality()
             self.signals.gsm_signal.emit(rssi)
-            if fast_ok:
-                self.signals.modem_status.emit("Modem: Online (Fast SMS Ready)")
-            else:
-                self.signals.modem_status.emit(f"Modem: Online (Fast SMS: {fast_msg})")
+            self.signals.modem_status.emit("Modem: Online")
         else:
             self.signals.modem_status.emit(f"Modem: Init failed - {msg}")
     # Enhanced on-screen keyboard dialog for SMS text with safety styling
     def open_sms_keyboard(self):
         dialog = QDialog(self)
-        dialog.setWindowTitle("ðŸ“± Type SMS Message")
+        dialog.setWindowTitle("📱 Type SMS Message")
         dialog.setFixedSize(500, 400)
         dialog.setStyleSheet("""
             QDialog {
@@ -1105,7 +935,7 @@ class MinerMonitorApp(QWidget):
         layout.setSpacing(10)
 
         # Title
-        title_label = QLabel("ðŸ“± Type Your Message")
+        title_label = QLabel("📱 Type Your Message")
         title_label.setAlignment(Qt.AlignCenter)
         title_label.setStyleSheet("""
             QLabel {
@@ -1253,8 +1083,8 @@ class MinerMonitorApp(QWidget):
             bg_color = "#3d1a1a"
             if not self._above_threshold:
                 self._above_threshold = True
-                self.result_label.setText("âš ï¸ AUTO SOS TRIGGERED - HIGH PPM DETECTED! âš ï¸")
-                threading.Thread(target=self._send_sos_all_contacts_thread, daemon=True).start()
+                self.result_label.setText("⚠️ AUTO SOS TRIGGERED - HIGH PPM DETECTED! ⚠️")
+                threading.Thread(target=self._send_sos_thread, daemon=True).start()
         
         if ppm < PPM_DANGER:
             self._above_threshold = False
@@ -1294,19 +1124,18 @@ class MinerMonitorApp(QWidget):
     def _upload_to_firebase(self, ppm_value):
         """Upload PPM data to Firebase in a separate thread."""
         if not self.firebase_uploader.initialized:
-            self.signals.firebase_status.emit("ðŸ“¡ Firebase: Not Available")
+            self.signals.firebase_status.emit("📡 Firebase: Not Available")
             return
         
         try:
-            # Use the new send_data_to_firestore method with the current PPM value
-            success, message = self.firebase_uploader.send_data_to_firestore(ppm_value)
+            success, message = self.firebase_uploader.upload_ppm_data(ppm_value)
             if success:
                 stats = self.firebase_uploader.get_stats()
-                self.signals.firebase_status.emit(f"ðŸ“¡ Firebase: âœ… Uploaded ({stats['upload_count']})")
+                self.signals.firebase_status.emit(f"📡 Firebase: ✅ Uploaded ({stats['upload_count']})")
             else:
-                self.signals.firebase_status.emit(f"ðŸ“¡ Firebase: âŒ Failed - {message[:30]}...")
+                self.signals.firebase_status.emit(f"📡 Firebase: ❌ Failed - {message[:30]}...")
         except Exception as e:
-            self.signals.firebase_status.emit(f"ðŸ“¡ Firebase: âŒ Error - {str(e)[:30]}...")
+            self.signals.firebase_status.emit(f"📡 Firebase: ❌ Error - {str(e)[:30]}...")
 
     def ze03_worker(self):
         while True:
@@ -1353,20 +1182,20 @@ class MinerMonitorApp(QWidget):
         reply = QMessageBox.question(
             self, 
             "SOS Confirmation", 
-            "ðŸš¨ EMERGENCY SOS ALERT ðŸš¨\n\nAre you sure you want to send an SOS message?\n\nThis will send an emergency alert to ALL contacts simultaneously!",
+            "🚨 EMERGENCY SOS ALERT 🚨\n\nAre you sure you want to send an SOS message?\n\nThis will send an emergency alert to the selected contact.",
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No
         )
         
         if reply == QMessageBox.Yes:
-            threading.Thread(target=self._send_sos_all_contacts_thread, daemon=True).start()
+            threading.Thread(target=self._send_sos_thread, daemon=True).start()
 
     def on_send_pressed(self):
         # Show confirmation dialog for SMS
         reply = QMessageBox.question(
             self, 
             "SMS Confirmation", 
-            "ðŸ“± Send SMS Message ðŸ“±\n\nAre you sure you want to send a custom SMS message?\n\nThis will send a message to the selected contact.",
+            "📱 Send SMS Message 📱\n\nAre you sure you want to send a custom SMS message?\n\nThis will send a message to the selected contact.",
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No
         )
@@ -1380,7 +1209,7 @@ class MinerMonitorApp(QWidget):
 
     def _send_sos_thread(self):
         # Show loading dialog
-        self.loading_dialog = LoadingDialog(self, "ðŸš¨ Sending SOS Alert...")
+        self.loading_dialog = LoadingDialog(self, "🚨 Sending SOS Alert...")
         self.loading_dialog.show()
         
         # Disable buttons
@@ -1394,7 +1223,7 @@ class MinerMonitorApp(QWidget):
                 return
             
             # Update loading message
-            self.loading_dialog.update_message("ðŸš¨ Connecting to network...")
+            self.loading_dialog.update_message("🚨 Connecting to network...")
             
             ok, raw = self.modem_ctrl.send_sms_textmode(number, SOS_SMS_TEXT, timeout=20)
             self.signals.sms_result.emit(ok, raw)
@@ -1406,60 +1235,9 @@ class MinerMonitorApp(QWidget):
             self.sos_button.setDisabled(False)
             self.send_button.setDisabled(False)
 
-    def _send_sos_all_contacts_thread(self):
-        """New lightning-fast SOS method that sends to ALL contacts in parallel."""
-        # Show loading dialog with updated message for all contacts
-        self.loading_dialog = LoadingDialog(self, "🚨 Sending SOS Alert to ALL Contacts...")
-        self.loading_dialog.show()
-        
-        # Disable buttons
-        self.sos_button.setDisabled(True)
-        self.send_button.setDisabled(True)
-        
-        try:
-            if not self.modem_ctrl.is_alive():
-                self.signals.sms_result.emit(False, "Modem not responding to AT")
-                return
-            
-            # Update loading message
-            self.loading_dialog.update_message("🚨 Sending to ALL contacts in parallel...")
-            
-            # Send SOS to ALL contacts simultaneously using parallel processing
-            sos_results = self.modem_ctrl.send_sms_to_all_contacts_parallel(
-                self.contacts, 
-                SOS_SMS_TEXT, 
-                timeout=5  # Reduced timeout for speed
-            )
-            
-            # Create summary message
-            total = sos_results['total']
-            successful = sos_results['successful']
-            failed = sos_results['failed']
-            
-            if successful == total:
-                summary = f"🚨 SOS sent to ALL {total} contacts successfully!"
-                self.signals.sms_result.emit(True, summary)
-            elif successful > 0:
-                summary = f"🚨 SOS sent to {successful}/{total} contacts. {failed} failed."
-                self.signals.sms_result.emit(True, summary)
-            else:
-                summary = f"🚨 SOS failed to send to ALL {total} contacts!"
-                self.signals.sms_result.emit(False, summary)
-            
-            # Store detailed results for debugging
-            print(f"SOS Results: {sos_results}")
-            
-        finally:
-            # Close loading dialog and re-enable buttons
-            if self.loading_dialog:
-                self.loading_dialog.close()
-                self.loading_dialog = None
-            self.sos_button.setDisabled(False)
-            self.send_button.setDisabled(False)
-
     def _send_custom_thread(self, number, text):
         # Show loading dialog
-        self.loading_dialog = LoadingDialog(self, "ðŸ“± Sending SMS Message...")
+        self.loading_dialog = LoadingDialog(self, "📱 Sending SMS Message...")
         self.loading_dialog.show()
         
         # Disable buttons
@@ -1472,7 +1250,7 @@ class MinerMonitorApp(QWidget):
                 return
             
             # Update loading message
-            self.loading_dialog.update_message("ðŸ“± Connecting to network...")
+            self.loading_dialog.update_message("📱 Connecting to network...")
             
             ok, raw = self.modem_ctrl.send_sms_textmode(number, text, timeout=20)
             self.signals.sms_result.emit(ok, raw)
@@ -1488,8 +1266,8 @@ class MinerMonitorApp(QWidget):
         if ok:
             # Success message with safety styling
             msg = QMessageBox(self)
-            msg.setWindowTitle("âœ… SMS Sent Successfully")
-            msg.setText("ðŸ“± Message sent successfully!")
+            msg.setWindowTitle("✅ SMS Sent Successfully")
+            msg.setText("📱 Message sent successfully!")
             msg.setInformativeText(f"Response: {(raw or '')[:200]}")
             msg.setIcon(QMessageBox.Information)
             msg.setStyleSheet("""
@@ -1513,7 +1291,7 @@ class MinerMonitorApp(QWidget):
                 }
             """)
             msg.exec_()
-            self.result_label.setText("âœ… Last SMS: Sent Successfully")
+            self.result_label.setText("✅ Last SMS: Sent Successfully")
             self.result_label.setStyleSheet("""
                 QLabel {
                     color: #00ff00;
@@ -1527,8 +1305,8 @@ class MinerMonitorApp(QWidget):
         else:
             # Error message with safety styling
             msg = QMessageBox(self)
-            msg.setWindowTitle("âŒ SMS Failed")
-            msg.setText("ðŸ“± Failed to send message!")
+            msg.setWindowTitle("❌ SMS Failed")
+            msg.setText("📱 Failed to send message!")
             msg.setInformativeText(f"Error: {(raw or '')[:200]}")
             msg.setIcon(QMessageBox.Warning)
             msg.setStyleSheet("""
@@ -1552,7 +1330,7 @@ class MinerMonitorApp(QWidget):
                 }
             """)
             msg.exec_()
-            self.result_label.setText("âŒ Last SMS: Failed")
+            self.result_label.setText("❌ Last SMS: Failed")
             self.result_label.setStyleSheet("""
                 QLabel {
                     color: #ff0000;
